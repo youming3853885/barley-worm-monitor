@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大麥蟲智能養殖監控系統</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 頂部導航欄 -->
+    <header class="header">
+        <div class="container">
+            <div class="logo-section">
+                <svg class="logo-icon" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                    <!-- 大麥蟲圖標 - 簡潔的蟲子造型 -->
+                    <ellipse cx="50" cy="50" rx="35" ry="15" fill="#34C759" opacity="0.2"/>
+                    <ellipse cx="50" cy="50" rx="30" ry="12" fill="#34C759"/>
+                    <circle cx="42" cy="45" r="2" fill="#fff"/>
+                    <circle cx="58" cy="45" r="2" fill="#fff"/>
+                    <path d="M 35 50 Q 50 55 65 50" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>
+                    <!-- 觸角 -->
+                    <path d="M 40 35 Q 35 25 30 20" stroke="#34C759" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                    <path d="M 60 35 Q 65 25 70 20" stroke="#34C759" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                </svg>
+                <h1>大麥蟲智能養殖系統</h1>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">連接中...</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="dashboard-container">
+            <!-- 左側欄 -->
+            <div class="left-column">
+                <!-- 裝置設定區 (緊湊版) -->
+                <section class="device-section card-compact">
+                    <div class="device-inputs">
+                        <input type="text" id="deviceId" placeholder="裝置 ID" value="barleybox-001">
+                        <input type="text" id="mqttBroker" placeholder="MQTT Broker" value="broker.MQTTGO.io">
+                        <button class="btn btn-primary btn-compact" id="connectBtn">連接</button>
+                    </div>
+                </section>
+
+                <!-- 即時監測數據 -->
+                <section class="telemetry-section">
+                    <h2 class="section-title-compact">即時監測</h2>
+                    <div class="telemetry-grid-compact">
+                        <!-- 環境溫度 -->
+                        <div class="telemetry-card-compact card-compact">
+                            <div class="telemetry-icon-compact">
+                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                                    <rect x="20" y="10" width="10" height="25" rx="2" fill="#FF9500"/>
+                                    <circle cx="25" cy="38" r="7" fill="#FF9500"/>
+                                </svg>
+                            </div>
+                            <div class="telemetry-content-compact">
+                                <div class="telemetry-label-compact">環境溫度</div>
+                                <div class="telemetry-value-compact" id="tempEnv">--<span>°C</span></div>
+                            </div>
+                        </div>
+
+                        <!-- 環境濕度 -->
+                        <div class="telemetry-card-compact card-compact">
+                            <div class="telemetry-icon-compact">
+                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M 25 10 Q 15 25 15 32 Q 15 40 25 40 Q 35 40 35 32 Q 35 25 25 10 Z" fill="#007AFF"/>
+                                </svg>
+                            </div>
+                            <div class="telemetry-content-compact">
+                                <div class="telemetry-label-compact">環境濕度</div>
+                                <div class="telemetry-value-compact" id="humEnv">--<span>%</span></div>
+                            </div>
+                        </div>
+
+                        <!-- 基質溫度 -->
+                        <div class="telemetry-card-compact card-compact">
+                            <div class="telemetry-icon-compact">
+                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                                    <rect x="20" y="10" width="10" height="25" rx="2" fill="#FF3B30"/>
+                                    <circle cx="25" cy="38" r="7" fill="#FF3B30"/>
+                                </svg>
+                            </div>
+                            <div class="telemetry-content-compact">
+                                <div class="telemetry-label-compact">基質溫度</div>
+                                <div class="telemetry-value-compact" id="tempSub">--<span>°C</span></div>
+                            </div>
+                        </div>
+
+                        <!-- 運作模式 -->
+                        <div class="telemetry-card-compact card-compact">
+                            <div class="telemetry-icon-compact">
+                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="25" cy="25" r="15" fill="#5856D6" opacity="0.2"/>
+                                    <path d="M 25 15 L 25 25 L 32 25" stroke="#5856D6" stroke-width="3" stroke-linecap="round"/>
+                                </svg>
+                            </div>
+                            <div class="telemetry-content-compact">
+                                <div class="telemetry-label-compact">運作模式</div>
+                                <div class="mode-value-compact" id="mode">--</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 設備狀態 -->
+                <section class="status-section">
+                    <h2 class="section-title-compact">設備控制</h2>
+                    <div class="status-grid-compact">
+                        <!-- 加熱器 -->
+                        <div class="status-card-compact card-compact">
+                            <div class="status-header-compact">
+                                <div class="status-icon-compact heater">
+                                    <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M 25 10 L 20 20 L 25 18 L 22 28 L 25 26 L 23 38 L 30 22 L 27 24 L 30 16 L 27 18 Z" fill="#FF9500"/>
+                                    </svg>
+                                </div>
+                                <div class="status-info-compact">
+                                    <div class="status-label-compact">加熱器</div>
+                                    <div class="status-value-compact" id="heaterStatus">關閉</div>
+                                </div>
+                            </div>
+                            <div class="status-controls-compact">
+                                <button class="btn-mini" onclick="controlHeater('ON')">開</button>
+                                <button class="btn-mini" onclick="controlHeater('OFF')">關</button>
+                                <button class="btn-mini btn-auto" onclick="controlHeater('AUTO')">自動</button>
+                            </div>
+                        </div>
+
+                        <!-- 噴霧器 -->
+                        <div class="status-card-compact card-compact">
+                            <div class="status-header-compact">
+                                <div class="status-icon-compact mist">
+                                    <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                                        <circle cx="15" cy="25" r="3" fill="#007AFF" opacity="0.6"/>
+                                        <circle cx="25" cy="20" r="4" fill="#007AFF" opacity="0.6"/>
+                                        <circle cx="35" cy="25" r="3" fill="#007AFF" opacity="0.6"/>
+                                    </svg>
+                                </div>
+                                <div class="status-info-compact">
+                                    <div class="status-label-compact">噴霧器</div>
+                                    <div class="status-value-compact" id="mistStatus">關閉</div>
+                                </div>
+                            </div>
+                            <div class="status-controls-compact">
+                                <button class="btn-mini" onclick="controlMist('ON')">開</button>
+                                <button class="btn-mini" onclick="controlMist('OFF')">關</button>
+                                <button class="btn-mini btn-auto" onclick="controlMist('AUTO')">自動</button>
+                            </div>
+                        </div>
+
+                        <!-- 餵食器 -->
+                        <div class="status-card-compact card-compact">
+                            <div class="status-header-compact">
+                                <div class="status-icon-compact feeder">
+                                    <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                                        <rect x="18" y="15" width="14" height="20" rx="2" fill="#34C759" opacity="0.3"/>
+                                        <circle cx="22" cy="22" r="2" fill="#34C759"/>
+                                        <circle cx="28" cy="25" r="2" fill="#34C759"/>
+                                    </svg>
+                                </div>
+                                <div class="status-info-compact">
+                                    <div class="status-label-compact">餵食器</div>
+                                    <div class="status-value-compact" id="feedStatus">待命</div>
+                                </div>
+                            </div>
+                            <div class="status-controls-compact">
+                                <button class="btn-mini btn-primary" onclick="triggerFeed()">立即餵食</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 右側欄 -->
+            <div class="right-column">
+                <!-- 參數設定 -->
+                <section class="config-section-compact">
+                    <h2 class="section-title-compact">參數設定</h2>
+                    <div class="config-tabs-compact">
+                        <button class="tab-btn-compact active" data-tab="temperature">基質溫度</button>
+                        <button class="tab-btn-compact" data-tab="humidity">環境濕度</button>
+                        <button class="tab-btn-compact" data-tab="feeding">餵食</button>
+                        <button class="tab-btn-compact" data-tab="system">系統</button>
+                    </div>
+
+                    <!-- 溫度控制 -->
+                    <div class="config-panel-compact card-compact active" id="temperature-panel">
+                        <div class="config-grid-compact">
+                            <div class="form-group-compact">
+                                <label>啟動溫度</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="tHeatOn" step="0.1" placeholder="25.5">
+                                    <span>°C</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>關閉溫度</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="tHeatOff" step="0.1" placeholder="28.5">
+                                    <span>°C</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>安全停機溫度</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="heaterMaxTemp" step="0.1" placeholder="32.0">
+                                    <span>°C</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>NTC 低溫閾值</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="ntcLowTemp" step="0.1" placeholder="20.0">
+                                    <span>°C</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>NTC 加熱時長</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="ntcHeatMinutes" placeholder="30">
+                                    <span>分鐘</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 濕度控制 -->
+                    <div class="config-panel-compact card-compact" id="humidity-panel">
+                        <div class="config-grid-compact">
+                            <div class="form-group-compact">
+                                <label>啟動濕度</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="hMistOn" step="0.1" placeholder="60.0">
+                                    <span>%</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>關閉濕度</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="hMistOff" step="0.1" placeholder="68.0">
+                                    <span>%</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>最大開啟時間</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="mistMaxOn" placeholder="60">
+                                    <span>秒</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>最小關閉時間</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="mistMinOff" placeholder="600">
+                                    <span>秒</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 餵食設定 -->
+                    <div class="config-panel-compact card-compact" id="feeding-panel">
+                        <div class="config-grid-compact">
+                            <div class="form-group-compact">
+                                <label>最小間隔</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="feedInterval" placeholder="360">
+                                    <span>分鐘</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>運轉時間 (ms)</label>
+                                <input type="number" id="feedDuration" placeholder="3000">
+                            </div>
+                            <div class="form-group-compact full-width">
+                                <label>時間排程</label>
+                                <input type="text" id="feedTimes" placeholder="09:00,17:00">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 系統設定 -->
+                    <div class="config-panel-compact card-compact" id="system-panel">
+                        <div class="config-grid-compact">
+                            <div class="form-group-compact">
+                                <label>上傳間隔</label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="uploadInterval" placeholder="30">
+                                    <span>分鐘</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>運作模式</label>
+                                <select id="modeSelect" class="mode-select-compact">
+                                    <option value="AUTO">自動 (AUTO)</option>
+                                    <option value="MANUAL">手動 (MANUAL)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="config-actions-compact">
+                        <button class="btn btn-secondary btn-compact" onclick="loadCurrentConfig()">讀取</button>
+                        <button class="btn btn-primary btn-compact" onclick="saveConfig()">儲存套用</button>
+                    </div>
+                </section>
+
+                <!-- 事件日誌 -->
+                <section class="log-section-compact">
+                    <h2 class="section-title-compact">事件日誌</h2>
+                    <div class="log-container-compact card-compact" id="logContainer">
+                        <div class="log-entry-compact log-info">
+                            <span class="log-time-compact">--:--:--</span>
+                            <span class="log-message-compact">等待連接裝置...</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>大麥蟲智能養殖監控系統 © 2025 | 最後更新: <span id="lastUpdate">--</span></p>
+        </div>
+    </footer>
+
+    <!-- MQTT.js 庫 -->
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
+

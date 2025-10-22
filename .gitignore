@@ -1,0 +1,30 @@
+# IDE 相關
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系統檔案
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日誌檔案
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 臨時檔案
+*.tmp
+*.temp
+
+# Node modules (如果未來需要)
+node_modules/
+
+# 環境變數
+.env
+.env.local
+.env.*.local
+

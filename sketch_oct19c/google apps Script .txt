@@ -1,0 +1,166 @@
+/**
+ * BarleyBox Google Sheets Webhook Receiver + Threshold Config
+ * ------------------------------------------------------------
+ * v2.0 (2025-10-19)
+ * - 支援資料記錄 (原始功能)
+ * - 支援閾值設定讀取與修改
+ * 
+ * 說明：
+ *  1️⃣ BarleyBox 裝置仍可 POST 感測資料到此 URL。
+ *  2️⃣ Web/MQTT 可用 GET & POST 查詢或修改閾值。
+ */
+
+const SHEET_NAME = '工作表1'; // 資料記錄
+const THRESHOLD_SHEET = '閾值設定'; // 閾值設定表
+const VALID_TOKEN = 'AKfycbw8MBbQkwL8JyguYL8eidSgi-GIkV6GDaT8zFZfHKBDwAktwgdHSP8CIAG_FN488bQ2TA';
+
+/* ===============================
+   Helper Functions
+================================*/
+
+function _ensureSheetHeader(sheet) {
+  if (sheet.getLastRow() === 0) {
+    const headers = [
+      'Server Time', 'Device ID', 'Device Time',
+      'Env Temp (C)', 'Env Humi (%)', 'Media Temp (C)',
+      'Heater On', 'Mist On', 'Mode', 'Raw JSON'
+    ];
+    sheet.appendRow(headers);
+  }
+}
+
+function _ensureThresholdSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(THRESHOLD_SHEET);
+  if (!sheet) sheet = ss.insertSheet(THRESHOLD_SHEET);
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 4).setValues([
+      ['Temp High', 'Temp Low', 'Humi High', 'Humi Low']
+    ]);
+    sheet.getRange(2, 1, 1, 4).setValues([
+      [30, 25, 80, 60] // 預設值，可修改
+    ]);
+  }
+  return sheet;
+}
+
+/* ===============================
+   接收感測資料
+================================*/
+function doPost(e) {
+  try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput('No POST data');
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(e.postData.contents);
+    } catch (err) {
+      return ContentService.createTextOutput('Invalid JSON');
+    }
+
+    if (!payload.token || String(payload.token) !== VALID_TOKEN) {
+      return ContentService.createTextOutput('Unauthorized');
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(SHEET_NAME);
+    if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
+    _ensureSheetHeader(sheet);
+
+    const device = payload.device || 'unknown';
+    const deviceTs = payload.timestamp || '';
+    const envTemp = payload.env_temp ?? '';
+    const envHumi = payload.env_humi ?? '';
+    const mediaTemp = payload.media_temp ?? '';
+    const heaterOn = payload.heater_on ?? '';
+    const mistOn = payload.mist_on ?? '';
+    const mode = payload.mode || '';
+
+    const row = [
+      new Date(),
+      device,
+      deviceTs,
+      envTemp,
+      envHumi,
+      mediaTemp,
+      heaterOn,
+      mistOn,
+      mode,
+      JSON.stringify(payload)
+    ];
+
+    sheet.appendRow(row);
+    return ContentService.createTextOutput('OK');
+
+  } catch (error) {
+    console.error(error);
+    return ContentService.createTextOutput('Server Error: ' + error);
+  }
+}
+
+/* ===============================
+   查詢與更新閾值設定
+================================*/
+
+function doGet(e) {
+  try {
+    const action = e.parameter.action;
+
+    if (action === 'get_thresholds') {
+      const sheet = _ensureThresholdSheet();
+      const values = sheet.getRange(2, 1, 1, 4).getValues()[0];
+      const data = {
+        temp_high: values[0],
+        temp_low: values[1],
+        humi_high: values[2],
+        humi_low: values[3],
+      };
+      return ContentService
+        .createTextOutput(JSON.stringify(data))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'update_thresholds') {
+      const sheet = _ensureThresholdSheet();
+      const tempHigh = parseFloat(e.parameter.temp_high);
+      const tempLow = parseFloat(e.parameter.temp_low);
+      const humiHigh = parseFloat(e.parameter.humi_high);
+      const humiLow = parseFloat(e.parameter.humi_low);
+
+      sheet.getRange(1, 1, 1, 4).setValues([
+        ['Temp High', 'Temp Low', 'Humi High', 'Humi Low']
+      ]);
+      sheet.getRange(2, 1, 1, 4).setValues([
+        [tempHigh, tempLow, humiHigh, humiLow]
+      ]);
+
+      return ContentService
+        .createTextOutput('Thresholds Updated')
+        .setMimeType(ContentService.MimeType.TEXT);
+    }
+
+    // 預設回傳最後 10 筆資料
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(SHEET_NAME);
+    if (!sheet) return ContentService.createTextOutput('No data sheet yet');
+
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2)
+      return ContentService.createTextOutput('No data rows yet');
+
+    const startRow = Math.max(2, lastRow - 9);
+    const range = sheet.getRange(startRow, 1, lastRow - startRow + 1, lastCol);
+    const values = range.getValues();
+
+    let out = 'Last rows:\n';
+    values.forEach(r => out += r.join(' | ') + '\n');
+    return ContentService.createTextOutput(out);
+
+  } catch (err) {
+    console.error('doGet error:', err);
+    return ContentService.createTextOutput('Error: ' + err);
+  }
+}
