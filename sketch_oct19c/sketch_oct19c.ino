@@ -142,7 +142,7 @@ bool readAHT25(float* temperature, float* humidity) {
   return false;
 }
 
-// ===== NTC 溫度讀取（Steinhart-Hart 方程式） =====
+// ===== NTC 溫度讀取 =====
 float readNTCTempC() {
   const float ntc_r25 = 10000.0f;  // 25°C時的電阻值（10K）
   const float ntc_beta = 3950.0f;  // B值
@@ -152,7 +152,7 @@ float readNTCTempC() {
   float voltage = (float)adc_value / 4095.0f * config.ntc_adc_vref;
   float ntc_r = ntc_rpull * voltage / (config.ntc_adc_vref - voltage);
   
-  // Steinhart-Hart 方程式簡化版
+  // Steinhart-Hart 
   float steinhart = log(ntc_r / ntc_r25) / ntc_beta;
   steinhart += 1.0f / (25.0f + 273.15f);
   float temp_k = 1.0f / steinhart;
