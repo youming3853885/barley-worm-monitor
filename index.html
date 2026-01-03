@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>大麥蟲智能養殖監控系統</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- 頂部導航欄 -->
@@ -39,7 +40,7 @@
                 <section class="device-section card-compact">
                     <div class="device-inputs">
                         <input type="text" id="deviceId" placeholder="裝置 ID" value="barleybox-001">
-                        <input type="text" id="mqttBroker" placeholder="MQTT Broker" value="broker.MQTTGO.io">
+                        <input type="text" id="mqttBroker" placeholder="MQTT Broker" value="MQTTGO.io">
                         <button class="btn btn-primary btn-compact" id="connectBtn">連接</button>
                     </div>
                 </section>
@@ -47,127 +48,132 @@
                 <!-- 即時監測數據 -->
                 <section class="telemetry-section">
                     <h2 class="section-title-compact">即時監測</h2>
-                    <div class="telemetry-grid-compact">
-                        <!-- 環境溫度 -->
-                        <div class="telemetry-card-compact card-compact">
-                            <div class="telemetry-icon-compact">
-                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                    <div class="gauge-grid">
+                        <!-- 環境溫度圓盤儀表 -->
+                        <div class="gauge-item">
+                            <div class="gauge-container">
+                                <canvas id="tempEnvGauge" width="150" height="150"></canvas>
+                                <div class="gauge-center">
+                                    <div class="gauge-value" id="tempEnv">--</div>
+                                    <div class="gauge-unit">°C</div>
+                                </div>
+                            </div>
+                            <div class="gauge-label">
+                                <svg class="gauge-icon" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
                                     <rect x="20" y="10" width="10" height="25" rx="2" fill="#FF9500"/>
                                     <circle cx="25" cy="38" r="7" fill="#FF9500"/>
                                 </svg>
-                            </div>
-                            <div class="telemetry-content-compact">
-                                <div class="telemetry-label-compact">環境溫度</div>
-                                <div class="telemetry-value-compact" id="tempEnv">--<span>°C</span></div>
+                                <span>環境溫度</span>
                             </div>
                         </div>
 
-                        <!-- 環境濕度 -->
-                        <div class="telemetry-card-compact card-compact">
-                            <div class="telemetry-icon-compact">
-                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                        <!-- 環境濕度圓盤儀表 -->
+                        <div class="gauge-item">
+                            <div class="gauge-container">
+                                <canvas id="humEnvGauge" width="150" height="150"></canvas>
+                                <div class="gauge-center">
+                                    <div class="gauge-value" id="humEnv">--</div>
+                                    <div class="gauge-unit">%</div>
+                                </div>
+                            </div>
+                            <div class="gauge-label">
+                                <svg class="gauge-icon" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M 25 10 Q 15 25 15 32 Q 15 40 25 40 Q 35 40 35 32 Q 35 25 25 10 Z" fill="#007AFF"/>
                                 </svg>
-                            </div>
-                            <div class="telemetry-content-compact">
-                                <div class="telemetry-label-compact">環境濕度</div>
-                                <div class="telemetry-value-compact" id="humEnv">--<span>%</span></div>
+                                <span>環境濕度</span>
                             </div>
                         </div>
 
-                        <!-- 基質溫度 -->
-                        <div class="telemetry-card-compact card-compact">
-                            <div class="telemetry-icon-compact">
-                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+                        <!-- 基質溫度圓盤儀表 -->
+                        <div class="gauge-item">
+                            <div class="gauge-container">
+                                <canvas id="tempSubGauge" width="150" height="150"></canvas>
+                                <div class="gauge-center">
+                                    <div class="gauge-value" id="tempSub">--</div>
+                                    <div class="gauge-unit">°C</div>
+                                </div>
+                            </div>
+                            <div class="gauge-label">
+                                <svg class="gauge-icon" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
                                     <rect x="20" y="10" width="10" height="25" rx="2" fill="#FF3B30"/>
                                     <circle cx="25" cy="38" r="7" fill="#FF3B30"/>
                                 </svg>
-                            </div>
-                            <div class="telemetry-content-compact">
-                                <div class="telemetry-label-compact">基質溫度</div>
-                                <div class="telemetry-value-compact" id="tempSub">--<span>°C</span></div>
-                            </div>
-                        </div>
-
-                        <!-- 運作模式 -->
-                        <div class="telemetry-card-compact card-compact">
-                            <div class="telemetry-icon-compact">
-                                <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-                                    <circle cx="25" cy="25" r="15" fill="#5856D6" opacity="0.2"/>
-                                    <path d="M 25 15 L 25 25 L 32 25" stroke="#5856D6" stroke-width="3" stroke-linecap="round"/>
-                                </svg>
-                            </div>
-                            <div class="telemetry-content-compact">
-                                <div class="telemetry-label-compact">運作模式</div>
-                                <div class="mode-value-compact" id="mode">--</div>
+                                <span>基質溫度</span>
                             </div>
                         </div>
                     </div>
+                    
                 </section>
 
-                <!-- 設備狀態 -->
-                <section class="status-section">
+                <!-- 設備控制 -->
+                <section class="control-section">
                     <h2 class="section-title-compact">設備控制</h2>
-                    <div class="status-grid-compact">
+                    <div class="control-grid">
                         <!-- 加熱器 -->
-                        <div class="status-card-compact card-compact">
-                            <div class="status-header-compact">
-                                <div class="status-icon-compact heater">
-                                    <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-                                        <path d="M 25 10 L 20 20 L 25 18 L 22 28 L 25 26 L 23 38 L 30 22 L 27 24 L 30 16 L 27 18 Z" fill="#FF9500"/>
-                                    </svg>
-                                </div>
-                                <div class="status-info-compact">
-                                    <div class="status-label-compact">加熱器</div>
-                                    <div class="status-value-compact" id="heaterStatus">關閉</div>
-                                </div>
+                        <div class="control-item">
+                            <div class="control-logo heater" onclick="toggleControl('heater')" id="heaterLogo">
+                                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M 50 10 L 25 50 L 50 42 L 32 68 L 50 56 L 38 88 L 80 32 L 62 44 L 80 16 L 62 28 Z" fill="#FF9500"/>
+                                </svg>
+                                <div class="status-badge" id="heaterBadge">OFF</div>
                             </div>
-                            <div class="status-controls-compact">
-                                <button class="btn-mini" onclick="controlHeater('ON')">開</button>
-                                <button class="btn-mini" onclick="controlHeater('OFF')">關</button>
-                                <button class="btn-mini btn-auto" onclick="controlHeater('AUTO')">自動</button>
+                            <div class="control-label">加熱器</div>
+                            <div class="control-menu" id="heaterMenu">
+                                <button class="control-btn on" onclick="controlHeater('ON')">開啟</button>
+                                <button class="control-btn off" onclick="controlHeater('OFF')">關閉</button>
+                                <button class="control-btn auto" onclick="controlHeater('AUTO')">自動</button>
                             </div>
                         </div>
 
                         <!-- 噴霧器 -->
-                        <div class="status-card-compact card-compact">
-                            <div class="status-header-compact">
-                                <div class="status-icon-compact mist">
-                                    <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-                                        <circle cx="15" cy="25" r="3" fill="#007AFF" opacity="0.6"/>
-                                        <circle cx="25" cy="20" r="4" fill="#007AFF" opacity="0.6"/>
-                                        <circle cx="35" cy="25" r="3" fill="#007AFF" opacity="0.6"/>
-                                    </svg>
-                                </div>
-                                <div class="status-info-compact">
-                                    <div class="status-label-compact">噴霧器</div>
-                                    <div class="status-value-compact" id="mistStatus">關閉</div>
-                                </div>
+                        <div class="control-item">
+                            <div class="control-logo mist" onclick="toggleControl('mist')" id="mistLogo">
+                                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="20" cy="50" r="12" fill="#007AFF" opacity="0.8"/>
+                                    <circle cx="50" cy="30" r="15" fill="#007AFF" opacity="0.8"/>
+                                    <circle cx="80" cy="50" r="12" fill="#007AFF" opacity="0.8"/>
+                                    <circle cx="30" cy="75" r="9" fill="#007AFF" opacity="0.6"/>
+                                    <circle cx="70" cy="75" r="9" fill="#007AFF" opacity="0.6"/>
+                                </svg>
+                                <div class="status-badge" id="mistBadge">OFF</div>
                             </div>
-                            <div class="status-controls-compact">
-                                <button class="btn-mini" onclick="controlMist('ON')">開</button>
-                                <button class="btn-mini" onclick="controlMist('OFF')">關</button>
-                                <button class="btn-mini btn-auto" onclick="controlMist('AUTO')">自動</button>
+                            <div class="control-label">噴霧器</div>
+                            <div class="control-menu" id="mistMenu">
+                                <button class="control-btn on" onclick="controlMist('ON')">開啟</button>
+                                <button class="control-btn off" onclick="controlMist('OFF')">關閉</button>
+                                <button class="control-btn auto" onclick="controlMist('AUTO')">自動</button>
                             </div>
                         </div>
 
                         <!-- 餵食器 -->
-                        <div class="status-card-compact card-compact">
-                            <div class="status-header-compact">
-                                <div class="status-icon-compact feeder">
-                                    <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
-                                        <rect x="18" y="15" width="14" height="20" rx="2" fill="#34C759" opacity="0.3"/>
-                                        <circle cx="22" cy="22" r="2" fill="#34C759"/>
-                                        <circle cx="28" cy="25" r="2" fill="#34C759"/>
-                                    </svg>
-                                </div>
-                                <div class="status-info-compact">
-                                    <div class="status-label-compact">餵食器</div>
-                                    <div class="status-value-compact" id="feedStatus">待命</div>
-                                </div>
+                        <div class="control-item">
+                            <div class="control-logo feeder" onclick="triggerFeed()" id="feedLogo">
+                                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                                    <rect x="25" y="15" width="50" height="70" rx="8" fill="#34C759" opacity="0.3"/>
+                                    <circle cx="38" cy="38" r="6" fill="#34C759"/>
+                                    <circle cx="62" cy="50" r="6" fill="#34C759"/>
+                                    <circle cx="50" cy="65" r="5" fill="#34C759"/>
+                                </svg>
+                                <div class="status-badge" id="feedBadge">待命</div>
                             </div>
-                            <div class="status-controls-compact">
-                                <button class="btn-mini btn-primary" onclick="triggerFeed()">立即餵食</button>
+                            <div class="control-label">餵食器</div>
+                            <div class="control-hint">點擊立即餵食</div>
+                        </div>
+
+                        <!-- 運作模式 -->
+                        <div class="control-item">
+                            <div class="control-logo mode" onclick="toggleControl('mode')" id="modeLogo">
+                                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="50" cy="50" r="40" fill="#5856D6" opacity="0.2" stroke="#5856D6" stroke-width="3"/>
+                                    <path d="M 50 20 L 50 50 L 75 50" stroke="#5856D6" stroke-width="6" stroke-linecap="round"/>
+                                    <circle cx="50" cy="50" r="6" fill="#5856D6"/>
+                                </svg>
+                                <div class="status-badge" id="modeBadge">AUTO</div>
+                            </div>
+                            <div class="control-label">運作模式</div>
+                            <div class="control-menu" id="modeMenu">
+                                <button class="control-btn auto" onclick="controlMode('AUTO')">自動</button>
+                                <button class="control-btn manual" onclick="controlMode('MANUAL')">手動</button>
                             </div>
                         </div>
                     </div>
@@ -190,38 +196,73 @@
                     <div class="config-panel-compact card-compact active" id="temperature-panel">
                         <div class="config-grid-compact">
                             <div class="form-group-compact">
-                                <label>啟動溫度</label>
+                                <label>
+                                    啟動溫度
+                                    <span class="param-help param-help-right" data-tooltip="當基質溫度低於此值時，加熱器會自動啟動">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="tHeatOn" step="0.1" placeholder="25.5">
                                     <span>°C</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>關閉溫度</label>
+                                <label>
+                                    關閉溫度
+                                    <span class="param-help" data-tooltip="當基質溫度高於此值時，加熱器會自動關閉">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="tHeatOff" step="0.1" placeholder="28.5">
                                     <span>°C</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>安全停機溫度</label>
+                                <label>
+                                    安全停機溫度
+                                    <span class="param-help param-help-right" data-tooltip="安全保護機制，當溫度超過此值時強制關閉加熱器">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="heaterMaxTemp" step="0.1" placeholder="32.0">
                                     <span>°C</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>NTC 低溫閾值</label>
+                                <label>
+                                    NTC 低溫閾值
+                                    <span class="param-help" data-tooltip="基質溫度感測器的低溫警報值">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="ntcLowTemp" step="0.1" placeholder="20.0">
                                     <span>°C</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>NTC 加熱時長</label>
+                                <label>
+                                    NTC 加熱時長
+                                    <span class="param-help param-help-right" data-tooltip="當基質溫度過低時，加熱器持續運作的時間（分鐘）">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="ntcHeatMinutes" placeholder="30">
                                     <span>分鐘</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>
+                                    NTC ADC 參考電壓
+                                    <span class="param-help param-help-right" data-tooltip="用於校準 ADC 參考電壓（V），預設 3.3V。若測量值偏高，可調低此值；偏低則調高">?</span>
+                                </label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="ntcAdcVref" step="0.01" placeholder="3.3">
+                                    <span>V</span>
+                                </div>
+                            </div>
+                            <div class="form-group-compact">
+                                <label>
+                                    NTC 溫度偏移
+                                    <span class="param-help param-help-right" data-tooltip="溫度偏移量（°C），用於補償系統誤差。若測量值偏高，設為負值；偏低設為正值">?</span>
+                                </label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="ntcTempOffset" step="0.1" placeholder="0.0">
+                                    <span>°C</span>
                                 </div>
                             </div>
                         </div>
@@ -231,28 +272,40 @@
                     <div class="config-panel-compact card-compact" id="humidity-panel">
                         <div class="config-grid-compact">
                             <div class="form-group-compact">
-                                <label>啟動濕度</label>
+                                <label>
+                                    啟動濕度
+                                    <span class="param-help param-help-right" data-tooltip="當環境濕度低於此值時，噴霧器會自動啟動">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="hMistOn" step="0.1" placeholder="60.0">
                                     <span>%</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>關閉濕度</label>
+                                <label>
+                                    關閉濕度
+                                    <span class="param-help" data-tooltip="當環境濕度高於此值時，噴霧器會自動關閉">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="hMistOff" step="0.1" placeholder="68.0">
                                     <span>%</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>最大開啟時間</label>
+                                <label>
+                                    最大開啟時間
+                                    <span class="param-help param-help-right" data-tooltip="噴霧器單次運作的最長時間（秒），防止過度噴霧">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="mistMaxOn" placeholder="60">
                                     <span>秒</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>最小關閉時間</label>
+                                <label>
+                                    最小關閉時間
+                                    <span class="param-help" data-tooltip="噴霧器關閉後必須等待的最短時間（秒），避免頻繁啟動">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="mistMinOff" placeholder="600">
                                     <span>秒</span>
@@ -265,18 +318,30 @@
                     <div class="config-panel-compact card-compact" id="feeding-panel">
                         <div class="config-grid-compact">
                             <div class="form-group-compact">
-                                <label>最小間隔</label>
+                                <label>
+                                    運轉時間
+                                    <span class="param-help" data-tooltip="餵食器每次運轉的持續時間（秒），控制餵食量">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
-                                    <input type="number" id="feedInterval" placeholder="360">
-                                    <span>分鐘</span>
+                                    <input type="number" id="feedDuration" step="0.1" placeholder="10">
+                                    <span>秒</span>
                                 </div>
                             </div>
                             <div class="form-group-compact">
-                                <label>運轉時間 (ms)</label>
-                                <input type="number" id="feedDuration" placeholder="3000">
+                                <label>
+                                    兩次餵食最小間隔
+                                    <span class="param-help param-help-right" data-tooltip="兩次自動餵食之間的最小間隔時間（小時），預設為 10 小時。時間排程中的兩次時間也必須符合此間隔">?</span>
+                                </label>
+                                <div class="input-with-unit-compact">
+                                    <input type="number" id="feedMinIntervalHours" min="1" max="24" placeholder="10">
+                                    <span>小時</span>
+                                </div>
                             </div>
                             <div class="form-group-compact full-width">
-                                <label>時間排程</label>
+                                <label>
+                                    時間排程
+                                    <span class="param-help param-help-right" data-tooltip="設定自動餵食的時間，格式：HH:MM,HH:MM（例如：09:00,17:00）。兩次時間必須間隔至少「兩次餵食最小間隔」設定的小時數">?</span>
+                                </label>
                                 <input type="text" id="feedTimes" placeholder="09:00,17:00">
                             </div>
                         </div>
@@ -286,18 +351,14 @@
                     <div class="config-panel-compact card-compact" id="system-panel">
                         <div class="config-grid-compact">
                             <div class="form-group-compact">
-                                <label>上傳間隔</label>
+                                <label>
+                                    上傳間隔
+                                    <span class="param-help param-help-right" data-tooltip="設備向雲端上傳數據的時間間隔（分鐘）">?</span>
+                                </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="uploadInterval" placeholder="30">
                                     <span>分鐘</span>
                                 </div>
-                            </div>
-                            <div class="form-group-compact">
-                                <label>運作模式</label>
-                                <select id="modeSelect" class="mode-select-compact">
-                                    <option value="AUTO">自動 (AUTO)</option>
-                                    <option value="MANUAL">手動 (MANUAL)</option>
-                                </select>
                             </div>
                         </div>
                     </div>

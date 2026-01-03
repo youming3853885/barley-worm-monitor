@@ -1,720 +1,720 @@
-/* BarleyBox_MQTT_OLED_AHT25.ino
-   Integrated:
-    - AHT25 (Adafruit_AHTX0) on TwoWire(1) (SDA=32,SCL=33)
-    - OLED SSD1306 via U8g2 on Wire (SDA=4,SCL=15)
-    - NTC 10K on ADC (GPIO34)
-    - 2x Relay (mist, heater)
-    - Servo feeder (Servo)
-    - MQTT telemetry & control (config update via MQTT)
-    - Google Sheets webhook upload (POST JSON)
-    - Config persisted in Preferences (NVS)
-*/
-
-#include <Arduino.h>
+// 大麥蟲智能養殖監控系統 - ESP32 韌體
 #include <WiFi.h>
-#include <HTTPClient.h>
-
-// 必須在 PubSubClient.h 之前定義，增加 MQTT 訊息緩衝區大小
-#define MQTT_MAX_PACKET_SIZE 512
-
 #include <PubSubClient.h>
-#include <Adafruit_AHTX0.h>
-#include <ESP32Servo.h>
-#include <Preferences.h>
-#include <ArduinoJson.h>
 #include <Wire.h>
-#include <U8g2lib.h>
-#include <math.h>
+#include <Preferences.h>
 #include <time.h>
-#include <Thermistor.h>
-#include <NTC_Thermistor.h>
+#include <ArduinoJson.h>
 
-// ================ USER CONFIG (edit) =================
-const char* WIFI_SSID = "webduino.io";
-const char* WIFI_PASS = "webduino01";
-
-const char* MQTT_SERVER = "broker.MQTTGO.io";
+// ===== WiFi & MQTT =====
+const char* ssid = "webduino.io";
+const char* password = "webduino01";
+const char* mqtt_server = "MQTTGO.io";
 const uint16_t MQTT_PORT = 1883;
-const char* MQTT_USER = ""; // optional
-const char* MQTT_PASS = ""; // optional
+String device_id = "barleybox-001";
 
-const char* GOOGLE_WEBHOOK = "https://script.google.com/macros/s/AKfycbw8MBbQkwL8JyguYL8eidSgi-GIkV6GDaT8zFZfHKBDwAktwgdHSP8CIAG_FN488bQ2TA/exec";
-const char* GOOGLE_TOKEN   = "AKfycbw8MBbQkwL8JyguYL8eidSgi-GIkV6GDaT8zFZfHKBDwAktwgdHSP8CIAG_FN488bQ2TA";
-
-const char* DEVICE_ID = "barleybox-001";
-// =====================================================
-
-// ================= hardware pins =================
-#define PIN_RELAY_MIST  22
-#define PIN_RELAY_HEAT  21
-#define PIN_SERVO       25
-#define PIN_NTC_ADC     34   // ADC1 recommended for WiFi stability
-#define PIN_SDA_OLED    4
-#define PIN_SCL_OLED    15
-#define AHT25_SDA       32
-#define AHT25_SCL       33
-
-// NTC Thermistor params (10K NTC 3950)
-#define NTC_SENSOR_PIN              34
-#define NTC_REFERENCE_RESISTANCE    10000
-#define NTC_NOMINAL_RESISTANCE      10000
-#define NTC_NOMINAL_TEMPERATURE     25
-#define NTC_B_VALUE                 3950
-#define ESP32_ANALOG_RESOLUTION     4095
-#define ESP32_ADC_VREF_MV           3300
-
-// Instances
 WiFiClient espClient;
-PubSubClient mqtt(espClient);
-HTTPClient http;
-Preferences prefs;
-Adafruit_AHTX0 aht;
-Servo feeder;
+PubSubClient client(espClient);
+Preferences preferences;
 
-// NTC Thermistor
-Thermistor* thermistor = nullptr;
+// ===== GPIO 定義 =====
+#define PIN_HEATER 2          // 加熱器繼電器
+#define PIN_MIST 22           // 噴霧器繼電器
+#define PIN_STEPPER_IN1 25    // 步進馬達 IN1
+#define PIN_STEPPER_IN2 26    // 步進馬達 IN2
+#define PIN_STEPPER_IN3 27    // 步進馬達 IN3
+#define PIN_STEPPER_IN4 14    // 步進馬達 IN4
+#define PIN_NTC A0            // NTC 熱敏電阻 (ADC)
 
-// OLED (Wire)
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C oled(U8G2_R0, U8X8_PIN_NONE, PIN_SCL_OLED, PIN_SDA_OLED);
+// ===== AHT25 溫濕度感測器 =====
+#define AHT25_ADDR 0x38
+#define AHT25_CMD_INIT 0xBE
+#define AHT25_CMD_TRIGGER 0xAC
+#define AHT25_CMD_SOFTRESET 0xBA
 
-// second I2C for AHT25
-TwoWire I2C_AHT = TwoWire(1);
+// ===== 配置結構 =====
+struct Config {
+  float T_heat_on = 25.0f;              // 加熱啟動溫度
+  float T_heat_off = 33.0f;             // 加熱關閉溫度
+  float heater_max_temp = 34.0f;        // 安全停機溫度
+  float H_mist_on = 55.0f;              // 噴霧啟動濕度
+  float H_mist_off = 80.0f;             // 噴霧關閉濕度
+  int mist_max_on_seconds = 60;         // 噴霧最大開啟時間
+  int mist_min_off_seconds = 600;       // 噴霧最小關閉時間
+  float ntc_low_temp_threshold = 20.0f; // NTC 低溫閾值
+  int ntc_heat_on_minutes = 30;         // NTC 加熱時長
+  float ntc_adc_vref = 3.3f;            // NTC ADC 參考電壓
+  float ntc_temp_offset = 0.0f;         // NTC 溫度偏移
+  unsigned long feed_duration_ms = 10000;      // 餵食持續時間（毫秒）
+  int feed_min_interval_hours = 10;     // 兩次餵食最小間隔（小時）
+  String feed_times_csv = "";           // 餵食時間排程（CSV格式：HH:MM,HH:MM）
+  int upload_interval_seconds = 1800;   // 上傳間隔（秒）
+  String mode = "AUTO";                 // 運作模式：AUTO/MANUAL
+} config;
 
-// timing
-unsigned long lastTelemetryMs = 0;
-unsigned long lastGoogleMs = 0;
-unsigned long lastMistStopMs = 0;
-unsigned long mistStartMs = 0;
-unsigned long lastHeaterToggleMs = 0;
-unsigned long lastFeedMs = 0;
-unsigned long lastMQTTReconnectTry = 0;
-unsigned long lcdUpdateMs = 0;
-unsigned long ntcLowTempStart = 0;
-bool ntcLowTempHeating = false;
-
-#define TELEMETRY_INTERVAL_MS 1000UL
-
-// state
+// ===== 狀態變數 =====
+float temp_env = 0.0f;
+float hum_env = 0.0f;
+float temp_sub = 0.0f;
 bool heater_on = false;
 bool mist_on = false;
-bool autoMode = true;
-bool ahtReady = false;
+String current_mode = "AUTO";
 
-// MQTT topics (populated on connect)
-String topicTelemetry;
-String topicControlHeater;
-String topicControlMist;
-String topicControlFeed;
-String topicConfigIn;
-String topicConfigOut;
-String topicStatus;
-String topicCommand;
+// ===== 自動控制狀態 =====
+unsigned long mist_start_time = 0;
+unsigned long mist_stop_time = 0;
+unsigned long heater_start_time = 0;
+bool ntc_heating = false;
+unsigned long ntc_heat_start_time = 0;
 
-// ----------------- config (persisted) -----------------
-struct Config {
-  float T_heat_on;
-  float T_heat_off;
-  float H_mist_on;
-  float H_mist_off;
-  unsigned long mist_max_on_seconds;
-  unsigned long mist_min_off_seconds;
-  unsigned long feed_interval_seconds;
-  int feed_duration_ms;
-  unsigned long upload_interval_seconds;
-  float heater_max_temp;
-  String feed_times_csv;
-  float ntc_low_temp_threshold;
-  unsigned long ntc_heat_on_minutes;
-
-  Config() {
-    T_heat_on = 25.5f;
-    T_heat_off = 28.5f;
-    H_mist_on = 60.0f;
-    H_mist_off = 68.0f;
-    mist_max_on_seconds = 60;
-    mist_min_off_seconds = 600;
-    feed_interval_seconds = 6 * 3600;
-    feed_duration_ms = 3000;
-    upload_interval_seconds = 1800;
-    heater_max_temp = 32.0f;
-    feed_times_csv = "09:00,17:00";
-    ntc_low_temp_threshold = 20.0f;
-    ntc_heat_on_minutes = 30;
-  }
+// ===== 步進馬達 =====
+// 28BYJ-48 半步序列（8步，逆時針）
+const int stepperSequence[8][4] = {
+  {1, 0, 0, 0},
+  {1, 1, 0, 0},
+  {0, 1, 0, 0},
+  {0, 1, 1, 0},
+  {0, 0, 1, 0},
+  {0, 0, 1, 1},
+  {0, 0, 0, 1},
+  {1, 0, 0, 1}
 };
-Config config;
+int stepperCurrentStep = 0;
 
-const char* PREF_NAMESPACE = "barleycfg";
+// ===== 餵食排程 =====
+struct FeedTime {
+  int hour;
+  int minute;
+};
+FeedTime feedTimes[2];
+int feedTimeCount = 0;
+unsigned long lastFeedTime = 0;
+unsigned long nextFeedTime = 0;
 
-// forward declarations
-float readNTCTempC();
-void publishTelemetry(float t_env, float h_env, float t_sub);
-void doAutoControl(float t_env, float h_env, float t_sub);
-void setHeater(bool on);
-void setMist(bool on);
-void triggerFeed();
-void saveConfigToPrefs();
-void loadConfigFromPrefs();
-void publishConfig();
-void handleConfigJson(const char* payload);
-void mqttCallback(char* topic, byte* payload, unsigned int length);
-void connectWiFi();
-void connectMQTT();
-void uploadToGoogle(float envTemp, float envHumi, float mediaTemp);
-void updateOLED(float t_env, float h_env, float t_sub);
-void scanI2C(TwoWire &bus, const char *busName);
+// ===== 時間同步 =====
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 8 * 3600;  // GMT+8
+const int daylightOffset_sec = 0;
 
-// ================= setup =================
-void setup() {
-  Serial.begin(115200);
-  delay(200);
+// ===== 上傳計時 =====
+unsigned long lastUploadTime = 0;
 
-  // pins
-  pinMode(PIN_RELAY_HEAT, OUTPUT);
-  pinMode(PIN_RELAY_MIST, OUTPUT);
-  digitalWrite(PIN_RELAY_HEAT, LOW);
-  digitalWrite(PIN_RELAY_MIST, LOW);
-
-  feeder.attach(PIN_SERVO, 500, 2400);
-  feeder.write(0);
-
-  prefs.begin(PREF_NAMESPACE, false);
-  loadConfigFromPrefs();
-
-  // init I2C buses
-  Wire.begin(PIN_SDA_OLED, PIN_SCL_OLED);
-  Wire.setClock(100000);
-  delay(50);
-  scanI2C(Wire, "OLED Bus (Wire)");
-
-  I2C_AHT.begin(AHT25_SDA, AHT25_SCL);
-  I2C_AHT.setClock(100000);
-  delay(50);
-  scanI2C(I2C_AHT, "AHT Bus (I2C_AHT)");
-
-  // init OLED
-  oled.begin();
-  oled.clearBuffer();
-  oled.setFont(u8g2_font_ncenB08_tr);
-  oled.drawStr(0, 12, "BarleyBox Init...");
-  oled.sendBuffer();
-
-  // init AHT using second I2C port
-  ahtReady = aht.begin(&I2C_AHT);
-  if (!ahtReady) {
-    Serial.println("AHT init failed!");
-    oled.clearBuffer();
-    oled.drawStr(0, 12, "AHT init failed!");
-    oled.sendBuffer();
-  } else {
-    Serial.println("AHT initialized");
-  }
-
-  // init NTC Thermistor (ESP32 optimized version)
-  thermistor = new NTC_Thermistor_ESP32(
-    NTC_SENSOR_PIN,
-    NTC_REFERENCE_RESISTANCE,
-    NTC_NOMINAL_RESISTANCE,
-    NTC_NOMINAL_TEMPERATURE,
-    NTC_B_VALUE,
-    ESP32_ADC_VREF_MV,
-    ESP32_ANALOG_RESOLUTION
-  );
-  Serial.println("NTC Thermistor (ESP32) initialized");
-
-  // WiFi & MQTT
-  connectWiFi();
+// ===== AHT25 初始化 =====
+void initAHT25() {
+  Wire.beginTransmission(AHT25_ADDR);
+  Wire.write(AHT25_CMD_SOFTRESET);
+  Wire.endTransmission();
+  delay(20);
   
-  // 設置 MQTT 緩衝區大小（必須在連接前設置）
-  mqtt.setBufferSize(1024);
-  Serial.println("MQTT buffer size set to 1024 bytes");
-  
-  // NTP time sync (GMT+8 for Taiwan)
-  Serial.println("Configuring NTP time sync...");
-  configTime(8 * 3600, 0, "time.stdtime.gov.tw", "pool.ntp.org");
-  Serial.print("Waiting for NTP time sync");
-  time_t now = time(nullptr);
-  int retry = 0;
-  while (now < 8 * 3600 * 2 && retry < 20) {
-    delay(500);
-    Serial.print(".");
-    now = time(nullptr);
-    retry++;
-  }
-  Serial.println();
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    Serial.println(&timeinfo, "✅ Time synced: %Y-%m-%d %H:%M:%S");
-    oled.clearBuffer();
-    oled.drawStr(0, 12, "Time synced");
-    oled.sendBuffer();
-    delay(1000);
-  } else {
-    Serial.println("⚠️ Time sync failed, timestamps may be incorrect");
-  }
-  
-  mqtt.setServer(MQTT_SERVER, MQTT_PORT);
-  mqtt.setCallback(mqttCallback);
-  connectMQTT();
-
-  lastTelemetryMs = millis();
-  lastGoogleMs = millis();
-  lastMistStopMs = millis() - config.mist_min_off_seconds * 1000UL;
-  lcdUpdateMs = millis();
-}
-
-// ================= loop =================
-void loop() {
-  unsigned long now = millis();
-
-  if (WiFi.status() != WL_CONNECTED) connectWiFi();
-
-  if (!mqtt.connected()) {
-    if (now - lastMQTTReconnectTry > 5000) {
-      Serial.println("[MQTT] Attempting reconnection...");
-      connectMQTT();
-      lastMQTTReconnectTry = now;
-    }
-  } else {
-    mqtt.loop();
-  }
-
-  // Read sensors
-  float t_env = NAN, h_env = NAN;
-  sensors_event_t humidity, temp_event;
-  if (ahtReady) {
-    aht.getEvent(&humidity, &temp_event);
-    t_env = temp_event.temperature;
-    h_env = humidity.relative_humidity;
-  }
-  float t_sub = readNTCTempC();
-
-  // Telemetry every second
-  if (now - lastTelemetryMs >= TELEMETRY_INTERVAL_MS) {
-    publishTelemetry(t_env, h_env, t_sub);
-    lastTelemetryMs = now;
-  }
-
-  // Auto control
-  if (autoMode) doAutoControl(t_env, h_env, t_sub);
-
-  // OLED update every 1s
-  if (now - lcdUpdateMs >= 1000) {
-    updateOLED(t_env, h_env, t_sub);
-    lcdUpdateMs = now;
-  }
-
-  // Google upload
-  if (now - lastGoogleMs >= config.upload_interval_seconds * 1000UL) {
-    uploadToGoogle(t_env, h_env, t_sub);
-    lastGoogleMs = now;
-  }
-
-  // NTC low-temp auto-heat (configurable)
-  if (!isnan(t_sub)) {
-    if (!ntcLowTempHeating && t_sub < config.ntc_low_temp_threshold) {
-      Serial.println("[NTC] below threshold -> start timed heating");
-      setHeater(true);
-      ntcLowTempStart = now;
-      ntcLowTempHeating = true;
-    }
-    if (ntcLowTempHeating && (now - ntcLowTempStart >= config.ntc_heat_on_minutes * 60UL * 1000UL)) {
-      Serial.println("[NTC] timed heating done -> stop");
-      setHeater(false);
-      ntcLowTempHeating = false;
-    }
-  }
-
+  Wire.beginTransmission(AHT25_ADDR);
+  Wire.write(AHT25_CMD_INIT);
+  Wire.write(0x08);
+  Wire.write(0x00);
+  Wire.endTransmission();
   delay(10);
 }
 
-// ================= functions =================
+// ===== AHT25 讀取溫濕度 =====
+bool readAHT25(float* temperature, float* humidity) {
+  Wire.beginTransmission(AHT25_ADDR);
+  Wire.write(AHT25_CMD_TRIGGER);
+  Wire.write(0x33);
+  Wire.write(0x00);
+  Wire.endTransmission();
+  delay(80);
+  
+  Wire.requestFrom(AHT25_ADDR, 6);
+  if (Wire.available() < 6) return false;
+  
+  uint8_t data[6];
+  for (int i = 0; i < 6; i++) {
+    data[i] = Wire.read();
+  }
+  
+  if ((data[0] & 0x68) == 0x08) {
+    uint32_t h = ((uint32_t)data[1] << 12) | ((uint32_t)data[2] << 4) | ((uint32_t)data[3] >> 4);
+    uint32_t t = (((uint32_t)data[3] & 0x0F) << 16) | ((uint32_t)data[4] << 8) | (uint32_t)data[5];
+    
+    *humidity = (float)h * 100.0f / 1048576.0f;
+    *temperature = (float)t * 200.0f / 1048576.0f - 50.0f;
+    return true;
+  }
+  return false;
+}
 
-void scanI2C(TwoWire &bus, const char *busName) {
-  Serial.printf("\n🔍 Scanning %s ...\n", busName);
-  byte found = 0;
-  for (byte addr = 1; addr < 127; addr++) {
-    bus.beginTransmission(addr);
-    byte err = bus.endTransmission();
-    if (err == 0) {
-      Serial.printf("  ✅ Found device at 0x%02X\n", addr);
-      found++;
+// ===== NTC 溫度讀取（Steinhart-Hart 方程式） =====
+float readNTCTempC() {
+  const float ntc_r25 = 10000.0f;  // 25°C時的電阻值（10K）
+  const float ntc_beta = 3950.0f;  // B值
+  const float ntc_rpull = 10000.0f; // 上拉電阻（固定10K）
+  
+  int adc_value = analogRead(PIN_NTC);
+  float voltage = (float)adc_value / 4095.0f * config.ntc_adc_vref;
+  float ntc_r = ntc_rpull * voltage / (config.ntc_adc_vref - voltage);
+  
+  // Steinhart-Hart 方程式簡化版
+  float steinhart = log(ntc_r / ntc_r25) / ntc_beta;
+  steinhart += 1.0f / (25.0f + 273.15f);
+  float temp_k = 1.0f / steinhart;
+  float temp_c = temp_k - 273.15f;
+  
+  // 應用溫度偏移
+  return temp_c + config.ntc_temp_offset;
+}
+
+// ===== 步進馬達單步 =====
+void stepperStep(int step) {
+  step = step % 8;
+  digitalWrite(PIN_STEPPER_IN1, stepperSequence[step][0]);
+  digitalWrite(PIN_STEPPER_IN2, stepperSequence[step][1]);
+  digitalWrite(PIN_STEPPER_IN3, stepperSequence[step][2]);
+  digitalWrite(PIN_STEPPER_IN4, stepperSequence[step][3]);
+}
+
+// ===== 停止步進馬達 =====
+void stepperStop() {
+  digitalWrite(PIN_STEPPER_IN1, LOW);
+  digitalWrite(PIN_STEPPER_IN2, LOW);
+  digitalWrite(PIN_STEPPER_IN3, LOW);
+  digitalWrite(PIN_STEPPER_IN4, LOW);
+}
+
+// ===== 步進馬達旋轉 =====
+void stepperRotate(long steps, float stepDelayMs) {
+  unsigned long absSteps = abs(steps);
+  unsigned int stepDelayUs = (unsigned int)(stepDelayMs * 1000);
+  
+  Serial.printf("[Stepper] Start: %ld steps, %.1fms/step, CCW\n", absSteps, stepDelayMs);
+  
+  for (unsigned long i = 0; i < absSteps; i++) {
+    stepperStep(stepperCurrentStep);
+    stepperCurrentStep++;  // 正向循環（逆時針）
+    if (stepperCurrentStep >= 8) stepperCurrentStep = 0;
+    delayMicroseconds(stepDelayUs);
+  }
+  
+  stepperStop();
+  Serial.printf("[Stepper] Complete\n");
+}
+
+// ===== 觸發餵食 =====
+void triggerFeed(bool isManual = false) {
+  unsigned long now = millis();
+  
+  if (!isManual) {
+    // 自動觸發：檢查間隔
+    if (lastFeedTime > 0 && (now - lastFeedTime) < (unsigned long)config.feed_min_interval_hours * 3600000UL) {
+      Serial.println("Feed ignored: too soon");
+      return;
+    }
+    
+    // 檢查與噴霧的最小間隔（4小時）
+    if (mist_stop_time > 0 && (now - mist_stop_time) < 14400000UL) {
+      Serial.println("Feed ignored: too soon after mist");
+      return;
+    }
+  } else {
+    Serial.println("Manual feed trigger (no restrictions)");
+  }
+  
+  Serial.println("=== Triggering feed ===");
+  Serial.printf("feed_duration_ms: %lu\n", config.feed_duration_ms);
+  
+  // 計算步數（28BYJ-48 約 2048 步/圈，假設每秒約667步，1.5ms/步）
+  float stepDelayMs = 1.5f;
+  unsigned long totalSteps = (unsigned long)(config.feed_duration_ms / stepDelayMs);
+  
+  // 如果時間太長，動態調整步進延遲以保持總時間
+  if (totalSteps > 100000) {
+    stepDelayMs = (float)config.feed_duration_ms / 100000.0f;
+    totalSteps = 100000;
+  }
+  
+  Serial.printf("Stepper rotating %lu steps (duration: %lu ms, delay: %.1f ms per step)\n", 
+                totalSteps, config.feed_duration_ms, stepDelayMs);
+  
+  stepperRotate(totalSteps, stepDelayMs);
+  
+  lastFeedTime = now;
+  preferences.putULong("lastFeedTime", lastFeedTime);
+  
+  Serial.println("=== Feed complete ===");
+}
+
+// ===== 解析餵食時間排程 =====
+void parseFeedTimes() {
+  feedTimeCount = 0;
+  if (config.feed_times_csv.length() == 0) return;
+  
+  String csv = config.feed_times_csv;
+  csv.replace("、", ",");
+  int startPos = 0;
+  
+  while (startPos < csv.length() && feedTimeCount < 2) {
+    int commaPos = csv.indexOf(",", startPos);
+    String timeStr;
+    
+    if (commaPos > 0) {
+      timeStr = csv.substring(startPos, commaPos);
+      startPos = commaPos + 1;
+    } else {
+      timeStr = csv.substring(startPos);
+      startPos = csv.length();
+    }
+    
+    timeStr.trim();
+    int colonPos = timeStr.indexOf(":");
+    if (colonPos > 0) {
+      int h = timeStr.substring(0, colonPos).toInt();
+      int m = timeStr.substring(colonPos + 1).toInt();
+      
+      if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+        feedTimes[feedTimeCount].hour = h;
+        feedTimes[feedTimeCount].minute = m;
+        feedTimeCount++;
+      }
     }
   }
-  if (!found) Serial.printf("  ⚠️ No I2C devices found on %s\n", busName);
+  
+  Serial.printf("[Feed] Parsed %d feed times\n", feedTimeCount);
 }
 
-float readNTCTempC() {
-  if (thermistor == nullptr) {
-    return NAN;
+// ===== 計算下次餵食時間 =====
+void calculateNextFeedTime() {
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+  
+  nextFeedTime = 0;
+  unsigned long nowSeconds = t->tm_hour * 3600 + t->tm_min * 60 + t->tm_sec;
+  
+  for (int i = 0; i < feedTimeCount; i++) {
+    unsigned long feedSeconds = feedTimes[i].hour * 3600 + feedTimes[i].minute * 60;
+    
+    if (feedSeconds > nowSeconds) {
+      if (nextFeedTime == 0 || feedSeconds < nextFeedTime) {
+        nextFeedTime = feedSeconds;
+      }
+    }
   }
   
-  const double celsius = thermistor->readCelsius();
-  
-  // 檢查是否為有效讀數
-  if (isnan(celsius) || celsius < -50 || celsius > 150) {
-    return NAN;
+  if (nextFeedTime == 0 && feedTimeCount > 0) {
+    // 今天沒有了，使用明天的第一個
+    nextFeedTime = feedTimes[0].hour * 3600 + feedTimes[0].minute * 60;
   }
-  
-  return (float)celsius;
 }
 
-void publishTelemetry(float t_env, float h_env, float t_sub) {
-  StaticJsonDocument<384> doc;
-  doc["device"] = DEVICE_ID;
+// ===== 檢查並觸發排程餵食 =====
+void checkAndTriggerScheduledFeed() {
+  if (feedTimeCount == 0) return;
+  if (current_mode != "AUTO") return;
+  
+  time_t now = time(nullptr);
+  struct tm* t = localtime(&now);
+  unsigned long nowSeconds = t->tm_hour * 3600 + t->tm_min * 60;
+  
+  for (int i = 0; i < feedTimeCount; i++) {
+    if (t->tm_hour == feedTimes[i].hour && t->tm_min == feedTimes[i].minute) {
+      static int lastTriggeredMinute = -1;
+      if (t->tm_min != lastTriggeredMinute) {
+        lastTriggeredMinute = t->tm_min;
+        Serial.printf("[Feed] Scheduled feed triggered at %02d:%02d\n", t->tm_hour, t->tm_min);
+        triggerFeed(false);
+      }
+      break;
+    }
+  }
+}
+
+// ===== 自動控制邏輯 =====
+void doAutoControl() {
+  if (current_mode != "AUTO") return;
+  
+  unsigned long now = millis();
+  
+  // 加熱器控制
+  if (temp_env < config.T_heat_on && !heater_on) {
+    heater_on = true;
+    heater_start_time = now;
+    ntc_heating = false;
+    digitalWrite(PIN_HEATER, HIGH);
+    Serial.printf("[Auto] Heater ON (temp: %.1f < %.1f)\n", temp_env, config.T_heat_on);
+  } else if (heater_on) {
+    // 檢查安全停機溫度
+    if (temp_env >= config.heater_max_temp) {
+      heater_on = false;
+      digitalWrite(PIN_HEATER, LOW);
+      Serial.printf("[Auto] Heater OFF (safety: %.1f >= %.1f)\n", temp_env, config.heater_max_temp);
+    }
+    // 檢查關閉溫度
+    else if (temp_env >= config.T_heat_off) {
+      heater_on = false;
+      digitalWrite(PIN_HEATER, LOW);
+      Serial.printf("[Auto] Heater OFF (temp: %.1f >= %.1f)\n", temp_env, config.T_heat_off);
+    }
+  }
+  
+  // NTC 低溫加熱邏輯
+  if (temp_sub < config.ntc_low_temp_threshold && !ntc_heating && !heater_on) {
+    ntc_heating = true;
+    ntc_heat_start_time = now;
+    heater_on = true;
+    heater_start_time = now;
+    digitalWrite(PIN_HEATER, HIGH);
+    Serial.printf("[Auto] NTC Heater ON (sub temp: %.1f < %.1f)\n", temp_sub, config.ntc_low_temp_threshold);
+  } else if (ntc_heating && heater_on) {
+    // NTC 加熱持續到達到關閉溫度
+    if (temp_sub >= config.T_heat_off) {
+      ntc_heating = false;
+      heater_on = false;
+      digitalWrite(PIN_HEATER, LOW);
+      Serial.printf("[Auto] NTC Heater OFF (sub temp: %.1f >= %.1f)\n", temp_sub, config.T_heat_off);
+    }
+    // 安全停機
+    else if (temp_sub >= config.heater_max_temp) {
+      ntc_heating = false;
+      heater_on = false;
+      digitalWrite(PIN_HEATER, LOW);
+      Serial.printf("[Auto] NTC Heater OFF (safety: %.1f >= %.1f)\n", temp_sub, config.heater_max_temp);
+    }
+  }
+  
+  // 噴霧器控制
+  if (hum_env < config.H_mist_on && !mist_on && (now - mist_stop_time) >= (unsigned long)config.mist_min_off_seconds * 1000) {
+    mist_on = true;
+    mist_start_time = now;
+    digitalWrite(PIN_MIST, HIGH);
+    Serial.printf("[Auto] Mist ON (hum: %.1f < %.1f)\n", hum_env, config.H_mist_on);
+  } else if (mist_on) {
+    if (hum_env >= config.H_mist_off || (now - mist_start_time) >= (unsigned long)config.mist_max_on_seconds * 1000) {
+      mist_on = false;
+      mist_stop_time = now;
+      digitalWrite(PIN_MIST, LOW);
+      Serial.printf("[Auto] Mist OFF (hum: %.1f or timeout)\n", hum_env);
+    }
+  }
+}
+
+// ===== 儲存配置到 NVS =====
+void saveConfigToNVS() {
+  preferences.begin("config", false);
+  
+  preferences.putFloat("T_heat_on", config.T_heat_on);
+  preferences.putFloat("T_heat_off", config.T_heat_off);
+  preferences.putFloat("heater_max_temp", config.heater_max_temp);
+  preferences.putFloat("H_mist_on", config.H_mist_on);
+  preferences.putFloat("H_mist_off", config.H_mist_off);
+  preferences.putInt("mist_max_on", config.mist_max_on_seconds);
+  preferences.putInt("mist_min_off", config.mist_min_off_seconds);
+  preferences.putFloat("ntc_low_temp", config.ntc_low_temp_threshold);
+  preferences.putInt("ntc_heat_min", config.ntc_heat_on_minutes);
+  preferences.putFloat("ntc_adc_vref", config.ntc_adc_vref);
+  preferences.putFloat("ntc_temp_offset", config.ntc_temp_offset);
+  preferences.putULong("feed_duration", config.feed_duration_ms);
+  preferences.putInt("feed_min_int", config.feed_min_interval_hours);
+  preferences.putString("feed_times", config.feed_times_csv);
+  preferences.putInt("upload_int", config.upload_interval_seconds);
+  preferences.putString("mode", config.mode);
+  
+  preferences.end();
+  Serial.println("[Config] Saved to NVS");
+}
+
+// ===== 從 NVS 載入配置 =====
+void loadConfigFromNVS() {
+  preferences.begin("config", true);
+  
+  config.T_heat_on = preferences.getFloat("T_heat_on", 25.0f);
+  config.T_heat_off = preferences.getFloat("T_heat_off", 33.0f);
+  config.heater_max_temp = preferences.getFloat("heater_max_temp", 34.0f);
+  config.H_mist_on = preferences.getFloat("H_mist_on", 55.0f);
+  config.H_mist_off = preferences.getFloat("H_mist_off", 80.0f);
+  config.mist_max_on_seconds = preferences.getInt("mist_max_on", 60);
+  config.mist_min_off_seconds = preferences.getInt("mist_min_off", 600);
+  config.ntc_low_temp_threshold = preferences.getFloat("ntc_low_temp", 20.0f);
+  config.ntc_heat_on_minutes = preferences.getInt("ntc_heat_min", 30);
+  config.ntc_adc_vref = preferences.getFloat("ntc_adc_vref", 3.3f);
+  config.ntc_temp_offset = preferences.getFloat("ntc_temp_offset", 0.0f);
+  config.feed_duration_ms = preferences.getULong("feed_duration", 10000);
+  config.feed_min_interval_hours = preferences.getInt("feed_min_int", 10);
+  config.feed_times_csv = preferences.getString("feed_times", "");
+  config.upload_interval_seconds = preferences.getInt("upload_int", 1800);
+  config.mode = preferences.getString("mode", "AUTO");
+  
+  lastFeedTime = preferences.getULong("lastFeedTime", 0);
+  
+  preferences.end();
+  current_mode = config.mode;
+  parseFeedTimes();
+  Serial.println("[Config] Loaded from NVS");
+}
+
+// ===== 發布遙測數據 =====
+void publishTelemetry() {
+  StaticJsonDocument<512> doc;
+  doc["device"] = device_id;
   doc["ts_ms"] = millis();
-  // Round to 1 decimal place
-  if (!isnan(t_env)) doc["temp_env"] = round(t_env * 10.0f) / 10.0f;
-  if (!isnan(h_env)) doc["hum_env"] = round(h_env * 10.0f) / 10.0f;
-  if (!isnan(t_sub)) doc["temp_sub"] = round(t_sub * 10.0f) / 10.0f;
-  else doc["temp_sub"] = t_sub;
+  doc["temp_env"] = temp_env;
+  doc["hum_env"] = hum_env;
+  doc["temp_sub"] = temp_sub;
   doc["heater_on"] = heater_on;
   doc["mist_on"] = mist_on;
-  doc["mode"] = (autoMode ? "AUTO" : "MANUAL");
-  // include thresholds so web UI can read them via telemetry topic
-  JsonObject thr = doc.createNestedObject("thresholds");
-  thr["T_heat_on"] = config.T_heat_on;
-  thr["T_heat_off"] = config.T_heat_off;
-  thr["H_mist_on"] = config.H_mist_on;
-  thr["H_mist_off"] = config.H_mist_off;
-  thr["mist_max_on_seconds"] = config.mist_max_on_seconds;
-  thr["mist_min_off_seconds"] = config.mist_min_off_seconds;
-  thr["heater_max_temp"] = config.heater_max_temp;
-  thr["ntc_low_temp_threshold"] = config.ntc_low_temp_threshold;
-  thr["ntc_heat_on_minutes"] = config.ntc_heat_on_minutes;
-
-  String out; serializeJson(doc, out);
-  if (mqtt.connected()) {
-    bool published = mqtt.publish(topicTelemetry.c_str(), out.c_str());
-    Serial.print(published ? "[MQTT-OK] " : "[MQTT-FAIL] ");
-    Serial.print("Topic: ");
-    Serial.print(topicTelemetry);
-    Serial.print(" | ");
-  } else {
-    Serial.print("[MQTT-DISCONNECTED] ");
-  }
-  Serial.println(out);
+  doc["mode"] = current_mode;
+  
+  JsonObject thresholds = doc.createNestedObject("thresholds");
+  thresholds["T_heat_on"] = config.T_heat_on;
+  thresholds["T_heat_off"] = config.T_heat_off;
+  thresholds["H_mist_on"] = config.H_mist_on;
+  thresholds["H_mist_off"] = config.H_mist_off;
+  thresholds["mist_max_on_seconds"] = config.mist_max_on_seconds;
+  thresholds["mist_min_off_seconds"] = config.mist_min_off_seconds;
+  thresholds["heater_max_temp"] = config.heater_max_temp;
+  thresholds["ntc_low_temp_threshold"] = config.ntc_low_temp_threshold;
+  thresholds["ntc_heat_on_minutes"] = config.ntc_heat_on_minutes;
+  
+  String payload;
+  serializeJson(doc, payload);
+  
+  String topic = "farm/telemetry/" + device_id;
+  client.publish(topic.c_str(), payload.c_str());
 }
 
-void setHeater(bool on) {
-  if (on == heater_on) return;
-  digitalWrite(PIN_RELAY_HEAT, on ? HIGH : LOW);
-  heater_on = on;
-  lastHeaterToggleMs = millis();
-  StaticJsonDocument<192> s;
-  s["device"] = DEVICE_ID;
-  s["heater_on"] = heater_on;
-  String out; serializeJson(s, out);
-  if (mqtt.connected()) mqtt.publish(topicStatus.c_str(), out.c_str());
-  Serial.printf("Heater -> %s\n", heater_on ? "ON" : "OFF");
-}
-
-void setMist(bool on) {
-  if (on == mist_on) return;
-  digitalWrite(PIN_RELAY_MIST, on ? HIGH : LOW);
-  mist_on = on;
-  if (!on) lastMistStopMs = millis();
-  else mistStartMs = millis();
-  StaticJsonDocument<192> s;
-  s["device"] = DEVICE_ID;
-  s["mist_on"] = mist_on;
-  String out; serializeJson(s, out);
-  if (mqtt.connected()) mqtt.publish(topicStatus.c_str(), out.c_str());
-  Serial.printf("Mist -> %s\n", mist_on ? "ON" : "OFF");
-}
-
-void triggerFeed() {
-  unsigned long now = millis();
-  if (now - lastFeedMs < config.feed_interval_seconds * 1000UL) {
-    Serial.println("Feed ignored: too soon");
-    return;
-  }
-  Serial.println("Triggering feed...");
-  feeder.write(90); // adjust per your mechanical setup
-  delay(config.feed_duration_ms);
-  feeder.write(0);
-  lastFeedMs = now;
-  StaticJsonDocument<192> ev;
-  ev["device"] = DEVICE_ID;
-  ev["event"] = "feed";
-  ev["ts_ms"] = now;
-  String out; serializeJson(ev, out);
-  if (mqtt.connected()) mqtt.publish(topicStatus.c_str(), out.c_str());
-}
-
-void doAutoControl(float t_env, float h_env, float t_sub) {
-  unsigned long now = millis();
-  // Heater based on substrate temp (NTC)
-  if (!isnan(t_sub)) {
-    if (!heater_on && t_sub <= config.T_heat_on) setHeater(true);
-    if (heater_on && t_sub >= config.T_heat_off) setHeater(false);
-    if (heater_on && t_sub >= config.heater_max_temp) {
-      setHeater(false);
-      StaticJsonDocument<256> warn;
-      warn["device"] = DEVICE_ID;
-      warn["warning"] = "heater_force_off_over_temp";
-      warn["temp_sub"] = t_sub;
-      String out; serializeJson(warn, out);
-      if (mqtt.connected()) mqtt.publish(topicStatus.c_str(), out.c_str());
-    }
-  }
-  // Mist based on environment humidity
-  if (!isnan(h_env)) {
-    if (!mist_on) {
-      if (h_env <= config.H_mist_on && (now - lastMistStopMs >= config.mist_min_off_seconds * 1000UL)) {
-        setMist(true);
-      }
-    } else {
-      if (h_env >= config.H_mist_off) setMist(false);
-      else if ((now - mistStartMs) >= config.mist_max_on_seconds * 1000UL) setMist(false);
-    }
-    if (h_env >= 85.0 && mist_on) {
-      setMist(false);
-      StaticJsonDocument<256> warn;
-      warn["device"] = DEVICE_ID;
-      warn["warning"] = "hum_too_high_mist_forced_off";
-      warn["hum"] = h_env;
-      String out; serializeJson(warn, out);
-      if (mqtt.connected()) mqtt.publish(topicStatus.c_str(), out.c_str());
-    }
-  }
-}
-
-void saveConfigToPrefs() {
-  prefs.putFloat("T_heat_on", config.T_heat_on);
-  prefs.putFloat("T_heat_off", config.T_heat_off);
-  prefs.putFloat("H_mist_on", config.H_mist_on);
-  prefs.putFloat("H_mist_off", config.H_mist_off);
-  prefs.putULong("mist_max_on_seconds", config.mist_max_on_seconds);
-  prefs.putULong("mist_min_off_seconds", config.mist_min_off_seconds);
-  prefs.putULong("feed_interval_seconds", config.feed_interval_seconds);
-  prefs.putInt("feed_duration_ms", config.feed_duration_ms);
-  prefs.putULong("upload_interval_seconds", config.upload_interval_seconds);
-  prefs.putFloat("heater_max_temp", config.heater_max_temp);
-  prefs.putString("feed_times_csv", config.feed_times_csv);
-  prefs.putFloat("ntc_low_temp_threshold", config.ntc_low_temp_threshold);
-  prefs.putULong("ntc_heat_on_minutes", config.ntc_heat_on_minutes);
-  Serial.println("Config saved to NVS");
-}
-
-void loadConfigFromPrefs() {
-  if (prefs.isKey("T_heat_on")) config.T_heat_on = prefs.getFloat("T_heat_on", config.T_heat_on);
-  if (prefs.isKey("T_heat_off")) config.T_heat_off = prefs.getFloat("T_heat_off", config.T_heat_off);
-  if (prefs.isKey("H_mist_on")) config.H_mist_on = prefs.getFloat("H_mist_on", config.H_mist_on);
-  if (prefs.isKey("H_mist_off")) config.H_mist_off = prefs.getFloat("H_mist_off", config.H_mist_off);
-  if (prefs.isKey("mist_max_on_seconds")) config.mist_max_on_seconds = prefs.getULong("mist_max_on_seconds", config.mist_max_on_seconds);
-  if (prefs.isKey("mist_min_off_seconds")) config.mist_min_off_seconds = prefs.getULong("mist_min_off_seconds", config.mist_min_off_seconds);
-  if (prefs.isKey("feed_interval_seconds")) config.feed_interval_seconds = prefs.getULong("feed_interval_seconds", config.feed_interval_seconds);
-  if (prefs.isKey("feed_duration_ms")) config.feed_duration_ms = prefs.getInt("feed_duration_ms", config.feed_duration_ms);
-  if (prefs.isKey("upload_interval_seconds")) config.upload_interval_seconds = prefs.getULong("upload_interval_seconds", config.upload_interval_seconds);
-  if (prefs.isKey("heater_max_temp")) config.heater_max_temp = prefs.getFloat("heater_max_temp", config.heater_max_temp);
-  if (prefs.isKey("feed_times_csv")) config.feed_times_csv = prefs.getString("feed_times_csv", config.feed_times_csv);
-  if (prefs.isKey("ntc_low_temp_threshold")) config.ntc_low_temp_threshold = prefs.getFloat("ntc_low_temp_threshold", config.ntc_low_temp_threshold);
-  if (prefs.isKey("ntc_heat_on_minutes")) config.ntc_heat_on_minutes = prefs.getULong("ntc_heat_on_minutes", config.ntc_heat_on_minutes);
-  Serial.println("Config loaded from NVS");
-}
-
-void publishConfig() {
-  StaticJsonDocument<600> doc;
-  doc["device"] = DEVICE_ID;
+// ===== 發布當前配置 =====
+void publishCurrentConfig() {
+  StaticJsonDocument<512> doc;
+  doc["device"] = device_id;
   doc["T_heat_on"] = config.T_heat_on;
   doc["T_heat_off"] = config.T_heat_off;
+  doc["heater_max_temp"] = config.heater_max_temp;
   doc["H_mist_on"] = config.H_mist_on;
   doc["H_mist_off"] = config.H_mist_off;
   doc["mist_max_on_seconds"] = config.mist_max_on_seconds;
   doc["mist_min_off_seconds"] = config.mist_min_off_seconds;
-  doc["feed_interval_seconds"] = config.feed_interval_seconds;
-  doc["feed_duration_ms"] = config.feed_duration_ms;
-  doc["upload_interval_seconds"] = config.upload_interval_seconds;
-  doc["heater_max_temp"] = config.heater_max_temp;
-  doc["feed_times_csv"] = config.feed_times_csv;
   doc["ntc_low_temp_threshold"] = config.ntc_low_temp_threshold;
   doc["ntc_heat_on_minutes"] = config.ntc_heat_on_minutes;
-  doc["mode"] = autoMode ? "AUTO" : "MANUAL";
-  String out; serializeJson(doc, out);
-  if (mqtt.connected()) mqtt.publish(topicConfigOut.c_str(), out.c_str());
+  doc["ntc_adc_vref"] = config.ntc_adc_vref;
+  doc["ntc_temp_offset"] = config.ntc_temp_offset;
+  doc["feed_duration_ms"] = config.feed_duration_ms;
+  doc["feed_min_interval_hours"] = config.feed_min_interval_hours;
+  doc["feed_times_csv"] = config.feed_times_csv;
+  doc["upload_interval_seconds"] = config.upload_interval_seconds;
+  doc["mode"] = config.mode;
+  
+  String payload;
+  serializeJson(doc, payload);
+  
+  String topic = "farm/config/" + device_id + "/current";
+  client.publish(topic.c_str(), payload.c_str());
 }
 
-void handleConfigJson(const char* payload) {
-  StaticJsonDocument<512> doc;
-  DeserializationError err = deserializeJson(doc, payload);
-  if (err) {
-    Serial.println("Invalid JSON in config");
-    return;
-  }
-  bool changed = false;
-  if (doc.containsKey("ntc_low_temp_threshold")) { config.ntc_low_temp_threshold = doc["ntc_low_temp_threshold"].as<float>(); changed = true; }
-  if (doc.containsKey("ntc_heat_on_minutes")) { config.ntc_heat_on_minutes = doc["ntc_heat_on_minutes"].as<unsigned long>(); changed = true; }
-
-  if (doc.containsKey("T_heat_on")) { config.T_heat_on = doc["T_heat_on"].as<float>(); changed = true; }
-  if (doc.containsKey("T_heat_off")) { config.T_heat_off = doc["T_heat_off"].as<float>(); changed = true; }
-  if (doc.containsKey("H_mist_on")) { config.H_mist_on = doc["H_mist_on"].as<float>(); changed = true; }
-  if (doc.containsKey("H_mist_off")) { config.H_mist_off = doc["H_mist_off"].as<float>(); changed = true; }
-  if (doc.containsKey("mist_max_on_seconds")) { config.mist_max_on_seconds = doc["mist_max_on_seconds"].as<unsigned long>(); changed = true; }
-  if (doc.containsKey("mist_min_off_seconds")) { config.mist_min_off_seconds = doc["mist_min_off_seconds"].as<unsigned long>(); changed = true; }
-  if (doc.containsKey("feed_interval_seconds")) { config.feed_interval_seconds = doc["feed_interval_seconds"].as<unsigned long>(); changed = true; }
-  if (doc.containsKey("feed_duration_ms")) { config.feed_duration_ms = doc["feed_duration_ms"].as<int>(); changed = true; }
-  if (doc.containsKey("upload_interval_seconds")) { config.upload_interval_seconds = doc["upload_interval_seconds"].as<unsigned long>(); changed = true; }
-  if (doc.containsKey("heater_max_temp")) { config.heater_max_temp = doc["heater_max_temp"].as<float>(); changed = true; }
-  if (doc.containsKey("feed_times_csv")) { config.feed_times_csv = String((const char*)doc["feed_times_csv"]); changed = true; }
-  if (doc.containsKey("mode")) {
-    String m = String((const char*)doc["mode"]);
-    autoMode = (m.equalsIgnoreCase("AUTO"));
-    changed = true;
-  }
-  if (changed) {
-    saveConfigToPrefs();
-    publishConfig();
-    Serial.println("Config updated via MQTT and saved");
-  }
-}
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String t = String(topic);
+// ===== MQTT 回調 =====
+void callback(char* topic, byte* payload, unsigned int length) {
+  String topicStr = String(topic);
   String msg;
-  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
-  Serial.printf("MQTT recv topic:%s payload:%s\n", t.c_str(), msg.c_str());
-
-  if (t == topicControlHeater) {
-    if (msg == "ON") { setHeater(true); autoMode = false; publishConfig(); }
-    else if (msg == "OFF") { setHeater(false); autoMode = false; publishConfig(); }
-    else if (msg == "AUTO") { autoMode = true; publishConfig(); }
-  } else if (t == topicControlMist) {
-    if (msg == "ON") { setMist(true); autoMode = false; publishConfig(); }
-    else if (msg == "OFF") { setMist(false); autoMode = false; publishConfig(); }
-    else if (msg == "AUTO") { autoMode = true; publishConfig(); }
-  } else if (t == topicControlFeed) {
-    if (msg == "TRIGGER" || msg == "RUN") triggerFeed();
-  } else if (t == topicConfigIn) {
-    handleConfigJson(msg.c_str());
-  } else if (t == topicCommand) {
-    if (msg == "publish_config") publishConfig();
-    if (msg == "reboot") { ESP.restart(); }
+  for (int i = 0; i < length; i++) msg += (char)payload[i];
+  
+  Serial.printf("[MQTT] Recv topic: %s payload: %s\n", topicStr.c_str(), msg.c_str());
+  
+  // 配置輸入
+  if (topicStr == "farm/config/" + device_id) {
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, msg);
+    if (error) {
+      Serial.printf("[MQTT] JSON parse error: %s\n", error.c_str());
+      return;
+    }
+    
+    if (doc.containsKey("T_heat_on")) config.T_heat_on = doc["T_heat_on"];
+    if (doc.containsKey("T_heat_off")) config.T_heat_off = doc["T_heat_off"];
+    if (doc.containsKey("heater_max_temp")) config.heater_max_temp = doc["heater_max_temp"];
+    if (doc.containsKey("H_mist_on")) config.H_mist_on = doc["H_mist_on"];
+    if (doc.containsKey("H_mist_off")) config.H_mist_off = doc["H_mist_off"];
+    if (doc.containsKey("mist_max_on_seconds")) config.mist_max_on_seconds = doc["mist_max_on_seconds"];
+    if (doc.containsKey("mist_min_off_seconds")) config.mist_min_off_seconds = doc["mist_min_off_seconds"];
+    if (doc.containsKey("ntc_low_temp_threshold")) config.ntc_low_temp_threshold = doc["ntc_low_temp_threshold"];
+    if (doc.containsKey("ntc_heat_on_minutes")) config.ntc_heat_on_minutes = doc["ntc_heat_on_minutes"];
+    if (doc.containsKey("ntc_adc_vref")) config.ntc_adc_vref = doc["ntc_adc_vref"];
+    if (doc.containsKey("ntc_temp_offset")) config.ntc_temp_offset = doc["ntc_temp_offset"];
+    if (doc.containsKey("feed_duration_ms")) config.feed_duration_ms = doc["feed_duration_ms"];
+    if (doc.containsKey("feed_min_interval_hours")) {
+      config.feed_min_interval_hours = doc["feed_min_interval_hours"];
+      parseFeedTimes();
+    }
+    if (doc.containsKey("feed_times_csv")) {
+      config.feed_times_csv = doc["feed_times_csv"].as<String>();
+      parseFeedTimes();
+    }
+    if (doc.containsKey("upload_interval_seconds")) config.upload_interval_seconds = doc["upload_interval_seconds"];
+    if (doc.containsKey("mode")) {
+      config.mode = doc["mode"].as<String>();
+      current_mode = config.mode;
+    }
+    
+    saveConfigToNVS();
+    publishCurrentConfig();
+    Serial.println("[MQTT] Config updated");
+  }
+  
+  // 設備控制
+  else if (topicStr == "farm/control/" + device_id + "/heater") {
+    if (msg == "ON") {
+      heater_on = true;
+      digitalWrite(PIN_HEATER, HIGH);
+    } else if (msg == "OFF") {
+      heater_on = false;
+      digitalWrite(PIN_HEATER, LOW);
+    }
+  }
+  else if (topicStr == "farm/control/" + device_id + "/mist") {
+    if (msg == "ON") {
+      mist_on = true;
+      digitalWrite(PIN_MIST, HIGH);
+    } else if (msg == "OFF") {
+      mist_on = false;
+      digitalWrite(PIN_MIST, LOW);
+    }
+  }
+  else if (topicStr == "farm/control/" + device_id + "/feed") {
+    if (msg == "TRIGGER") {
+      triggerFeed(true);  // 手動觸發，無限制
+    }
+  }
+  else if (topicStr == "farm/control/" + device_id + "/mode") {
+    if (msg == "AUTO" || msg == "MANUAL") {
+      config.mode = msg;
+      current_mode = msg;
+      saveConfigToNVS();
+    }
   }
 }
 
-void connectWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-  Serial.printf("Connecting WiFi %s ...\n", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+// ===== NTP 時間同步 =====
+void setupNTP() {
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  struct tm timeinfo;
+  while (!getLocalTime(&timeinfo)) {
+    Serial.println("[NTP] Waiting for time sync...");
+    delay(1000);
+  }
+  Serial.println("[NTP] Time synced");
+}
+
+// ===== Setup =====
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("==== BarleyBox System Start ====");
+  
+  // GPIO 初始化
+  pinMode(PIN_HEATER, OUTPUT);
+  pinMode(PIN_MIST, OUTPUT);
+  pinMode(PIN_STEPPER_IN1, OUTPUT);
+  pinMode(PIN_STEPPER_IN2, OUTPUT);
+  pinMode(PIN_STEPPER_IN3, OUTPUT);
+  pinMode(PIN_STEPPER_IN4, OUTPUT);
+  pinMode(PIN_NTC, INPUT);
+  
+  digitalWrite(PIN_HEATER, LOW);
+  digitalWrite(PIN_MIST, LOW);
+  stepperStop();
+  
+  // I2C 初始化（AHT25）
+  Wire.begin();
+  delay(100);
+  initAHT25();
+  
+  // 載入配置
+  loadConfigFromNVS();
+  
+  // WiFi 連接
+  Serial.printf("[WiFi] Connecting to %s...\n", ssid);
+  WiFi.begin(ssid, password);
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.println();
+  
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("WiFi connected, IP: %s\n", WiFi.localIP().toString().c_str());
-    oled.clearBuffer();
-    oled.drawStr(0, 12, "WiFi connected");
-    oled.sendBuffer();
+    Serial.printf("\n[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+    setupNTP();
+    
+    // MQTT 連接
+    client.setServer(mqtt_server, MQTT_PORT);
+    client.setCallback(callback);
+    
+    String clientId = "ESP32-" + device_id + "-" + String(random(0xffff), HEX);
+    if (client.connect(clientId.c_str())) {
+      Serial.println("[MQTT] Connected");
+      
+      String subTopics[] = {
+        "farm/config/" + device_id,
+        "farm/control/" + device_id + "/heater",
+        "farm/control/" + device_id + "/mist",
+        "farm/control/" + device_id + "/feed",
+        "farm/control/" + device_id + "/mode"
+      };
+      
+      for (int i = 0; i < 5; i++) {
+        client.subscribe(subTopics[i].c_str());
+      }
+      
+      publishCurrentConfig();
+    }
   } else {
-    Serial.println("WiFi connect failed or timed out");
-    oled.clearBuffer();
-    oled.drawStr(0, 12, "WiFi failed");
-    oled.sendBuffer();
+    Serial.println("\n[WiFi] Connection failed!");
   }
+  
+  Serial.println("==== System Ready ====");
 }
 
-void connectMQTT() {
-  if (mqtt.connected()) return;
-  Serial.print("Connecting MQTT...");
-  String clientId = String(DEVICE_ID) + "-" + String(random(0xffff), HEX);
-  bool ok;
-  if (String(MQTT_USER).length() > 0) ok = mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASS);
-  else ok = mqtt.connect(clientId.c_str());
-  if (ok) {
-    Serial.println("MQTT connected");
-    // topics
-    topicTelemetry = String("farm/telemetry/") + DEVICE_ID;
-    topicControlHeater = String("farm/control/") + DEVICE_ID + "/heater";
-    topicControlMist = String("farm/control/") + DEVICE_ID + "/mist";
-    topicControlFeed = String("farm/control/") + DEVICE_ID + "/feed";
-    topicConfigIn = String("farm/config/") + DEVICE_ID;
-    topicConfigOut = String("farm/config/") + DEVICE_ID + "/current";
-    topicStatus = String("farm/status/") + DEVICE_ID;
-    topicCommand = String("farm/command/") + DEVICE_ID;
-
-    // subscribe
-    mqtt.subscribe(topicControlHeater.c_str());
-    mqtt.subscribe(topicControlMist.c_str());
-    mqtt.subscribe(topicControlFeed.c_str());
-    mqtt.subscribe(topicConfigIn.c_str());
-    mqtt.subscribe(topicCommand.c_str());
-
-    // publish initial
-    publishConfig();
-    StaticJsonDocument<256> st;
-    st["device"] = DEVICE_ID;
-    st["status"] = "online";
-    String out; serializeJson(st, out);
-    mqtt.publish(topicStatus.c_str(), out.c_str());
-  } else {
-    Serial.println("MQTT connect failed");
+// ===== Loop =====
+void loop() {
+  static unsigned long lastSensorRead = 0;
+  static unsigned long lastTelemetryPublish = 0;
+  
+  // MQTT 處理
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!client.connected()) {
+      String clientId = "ESP32-" + device_id + "-" + String(random(0xffff), HEX);
+      if (client.connect(clientId.c_str())) {
+        String subTopics[] = {
+          "farm/config/" + device_id,
+          "farm/control/" + device_id + "/heater",
+          "farm/control/" + device_id + "/mist",
+          "farm/control/" + device_id + "/feed",
+          "farm/control/" + device_id + "/mode"
+        };
+        for (int i = 0; i < 5; i++) {
+          client.subscribe(subTopics[i].c_str());
+        }
+      }
+    } else {
+      client.loop();
+    }
   }
-}
-
-void uploadToGoogle(float envTemp, float envHumi, float mediaTemp) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Google] WiFi not connected; skip upload");
-    return;
+  
+  // 讀取感測器（每秒）
+  unsigned long now = millis();
+  if (now - lastSensorRead >= 1000) {
+    lastSensorRead = now;
+    
+    if (readAHT25(&temp_env, &hum_env)) {
+      temp_sub = readNTCTempC();
+      doAutoControl();
+    }
   }
-  HTTPClient http;
-  http.begin(GOOGLE_WEBHOOK);
-  http.addHeader("Content-Type", "application/json");
-  StaticJsonDocument<256> doc;
-  time_t nowt = time(NULL);
-  char ts[32];
-  strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", localtime(&nowt));
-  doc["token"] = String(GOOGLE_TOKEN);
-  doc["device"] = DEVICE_ID;
-  doc["timestamp"] = String(ts);
-  // Round to 1 decimal place
-  if (!isnan(envTemp)) doc["env_temp"] = round(envTemp * 10.0f) / 10.0f;
-  if (!isnan(envHumi)) doc["env_humi"] = round(envHumi * 10.0f) / 10.0f;
-  if (!isnan(mediaTemp)) doc["media_temp"] = round(mediaTemp * 10.0f) / 10.0f;
-  else doc["media_temp"] = mediaTemp;
-  doc["heater_on"] = heater_on;
-  doc["mist_on"] = mist_on;
-  doc["mode"] = autoMode ? "AUTO" : "MANUAL";
-  String payload; serializeJson(doc, payload);
-  int code = http.POST(payload);
-  if (code > 0) {
-    Serial.printf("[Google] upload code=%d\n", code);
-  } else {
-    Serial.printf("[Google] upload failed: %s\n", http.errorToString(code).c_str());
+  
+  // 發布遙測數據（每秒）
+  if (now - lastTelemetryPublish >= 1000) {
+    lastTelemetryPublish = now;
+    if (client.connected()) {
+      publishTelemetry();
+    }
   }
-  http.end();
-}
-
-void updateOLED(float t_env, float h_env, float t_sub) {
-  oled.clearBuffer();
-  oled.setFont(u8g2_font_6x12_tf);
-
-  char line1[32];
-  char line2[32];
-  char line3[32];
-
-  if (!isnan(t_env)) snprintf(line1, sizeof(line1), "Env: %.1fC  %.0f%%", t_env, h_env);
-  else strncpy(line1, "Env: --.-C  --%", sizeof(line1));
-
-  if (!isnan(t_sub)) snprintf(line2, sizeof(line2), "Sub: %.1fC", t_sub);
-  else strncpy(line2, "Sub: --.-C", sizeof(line2));
-
-  snprintf(line3, sizeof(line3), "Mode:%s H:%s M:%s",
-           autoMode ? "AUTO" : "MAN",
-           heater_on ? "ON" : "OFF",
-           mist_on ? "ON" : "OFF");
-
-  oled.drawStr(0, 12, line1);
-  oled.drawStr(0, 28, line2);
-  oled.drawStr(0, 44, line3);
-
-  // show one line of thresholds summary
-  char thr[64];
-  snprintf(thr, sizeof(thr), "T_on:%.1f T_off:%.1f H_on:%.0f H_off:%.0f",
-           config.T_heat_on, config.T_heat_off, config.H_mist_on, config.H_mist_off);
-  oled.drawStr(0, 56, thr);
-
-  oled.sendBuffer();
+  
+  // 檢查排程餵食
+  checkAndTriggerScheduledFeed();
+  
+  delay(10);
 }

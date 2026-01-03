@@ -9,19 +9,31 @@ let topics = {
     controlHeater: '',
     controlMist: '',
     controlFeed: '',
+    controlMode: '',
     configIn: '',
     configOut: '',
     status: '',
     command: ''
 };
 
+// 圓盤儀表變數
+let gauges = {
+    tempEnv: { canvas: null, ctx: null },
+    humEnv: { canvas: null, ctx: null },
+    tempSub: { canvas: null, ctx: null }
+};
+
 // ===== 初始化 =====
 document.addEventListener('DOMContentLoaded', function() {
     initializeTabs();
+    initializeGauges();
     loadSavedSettings();
     
     // 連接按鈕事件
     document.getElementById('connectBtn').addEventListener('click', connectToDevice);
+    
+    // 初始化 Tooltip 點擊事件
+    initializeTooltips();
     
     // 載入儲存的裝置設定
     const savedDeviceId = localStorage.getItem('deviceId');
@@ -34,6 +46,170 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('mqttBroker').value = savedBroker;
     }
 });
+
+// ===== 初始化圓盤儀表 =====
+function initializeGauges() {
+    // 環境溫度儀表 (10-45°C) - 黃色漸層
+    gauges.tempEnv.canvas = document.getElementById('tempEnvGauge');
+    if (gauges.tempEnv.canvas) {
+        gauges.tempEnv.ctx = gauges.tempEnv.canvas.getContext('2d');
+        drawGauge(gauges.tempEnv, 25, 10, 45, 'tempEnv');
+    }
+    
+    // 環境濕度儀表 (0-100%) - 藍色漸層
+    gauges.humEnv.canvas = document.getElementById('humEnvGauge');
+    if (gauges.humEnv.canvas) {
+        gauges.humEnv.ctx = gauges.humEnv.canvas.getContext('2d');
+        drawGauge(gauges.humEnv, 50, 0, 100, 'humEnv');
+    }
+    
+    // 基質溫度儀表 (10-45°C) - 紅色漸層
+    gauges.tempSub.canvas = document.getElementById('tempSubGauge');
+    if (gauges.tempSub.canvas) {
+        gauges.tempSub.ctx = gauges.tempSub.canvas.getContext('2d');
+        drawGauge(gauges.tempSub, 25, 10, 45, 'tempSub');
+    }
+}
+
+// ===== 繪製圓盤儀表 =====
+function drawGauge(gauge, value, minValue, maxValue, type) {
+    if (!gauge.canvas || !gauge.ctx) return;
+    
+    const canvas = gauge.canvas;
+    const ctx = gauge.ctx;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const radius = Math.min(centerX, centerY) - 20;
+    
+    // 清空畫布
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 創建漸層色彩
+    let gradient;
+    if (type === 'tempEnv') {
+        // 環境溫度：淺黃色 -> 深黃色
+        gradient = ctx.createLinearGradient(centerX - radius, centerY, centerX + radius, centerY);
+        gradient.addColorStop(0, '#FFF3CD');    // 淺黃色
+        gradient.addColorStop(0.5, '#FFD60A');  // 中黃色
+        gradient.addColorStop(1, '#FF9500');    // 深黃色
+    } else if (type === 'humEnv') {
+        // 環境濕度：淺藍色 -> 深藍色
+        gradient = ctx.createLinearGradient(centerX - radius, centerY, centerX + radius, centerY);
+        gradient.addColorStop(0, '#E3F2FD');    // 淺藍色
+        gradient.addColorStop(0.5, '#64B5F6');  // 中藍色
+        gradient.addColorStop(1, '#1976D2');    // 深藍色
+    } else if (type === 'tempSub') {
+        // 基質溫度：淺紅色 -> 深紅色
+        gradient = ctx.createLinearGradient(centerX - radius, centerY, centerX + radius, centerY);
+        gradient.addColorStop(0, '#FFEBEE');    // 淺紅色
+        gradient.addColorStop(0.5, '#EF5350');  // 中紅色
+        gradient.addColorStop(1, '#C62828');    // 深紅色
+    }
+    
+    // 繪製背景圓環
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0.75 * Math.PI, 2.25 * Math.PI);
+    ctx.lineWidth = 14;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
+    ctx.stroke();
+    
+    // 計算進度（按比例）
+    const range = maxValue - minValue;
+    const normalizedValue = Math.min(Math.max(value - minValue, 0), range);
+    const percentage = normalizedValue / range;
+    const endAngle = 0.75 * Math.PI + (1.5 * Math.PI * percentage);
+    
+    // 繪製進度圓環（漸層）
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0.75 * Math.PI, endAngle);
+    ctx.lineWidth = 14;
+    ctx.strokeStyle = gradient;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    
+    // 繪製刻度和數值標籤
+    const scaleCount = 6; // 6個主要刻度點
+    for (let i = 0; i <= scaleCount; i++) {
+        const angle = 0.75 * Math.PI + (1.5 * Math.PI * i / scaleCount);
+        const scaleValue = minValue + (range * i / scaleCount);
+        
+        // 主刻度線
+        const startRadius = radius - 10;
+        const endRadius = radius + 5;
+        
+        const x1 = centerX + startRadius * Math.cos(angle);
+        const y1 = centerY + startRadius * Math.sin(angle);
+        const x2 = centerX + endRadius * Math.cos(angle);
+        const y2 = centerY + endRadius * Math.sin(angle);
+        
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.stroke();
+        
+        // 數值標籤（只顯示最小值和最大值）
+        if (i === 0 || i === scaleCount) {
+            const labelRadius = radius + 15;
+            const labelX = centerX + labelRadius * Math.cos(angle);
+            const labelY = centerY + labelRadius * Math.sin(angle);
+            
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            const displayValue = type === 'humidity' ? 
+                `${Math.round(scaleValue)}%` : 
+                `${Math.round(scaleValue)}°`;
+            ctx.fillText(displayValue, labelX, labelY);
+        }
+    }
+    
+    // 繪製小刻度線
+    for (let i = 0; i <= scaleCount * 2; i++) {
+        if (i % 2 !== 0) { // 只繪製中間的小刻度
+            const angle = 0.75 * Math.PI + (1.5 * Math.PI * i / (scaleCount * 2));
+            const startRadius = radius - 6;
+            const endRadius = radius + 2;
+            
+            const x1 = centerX + startRadius * Math.cos(angle);
+            const y1 = centerY + startRadius * Math.sin(angle);
+            const x2 = centerX + endRadius * Math.cos(angle);
+            const y2 = centerY + endRadius * Math.sin(angle);
+            
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.stroke();
+        }
+    }
+}
+
+// ===== 更新圓盤儀表 =====
+function updateGauge(type, value) {
+    let minValue, maxValue;
+    
+    switch(type) {
+        case 'tempEnv':
+            minValue = 10;
+            maxValue = 45;
+            break;
+        case 'humEnv':
+            minValue = 0;
+            maxValue = 100;
+            break;
+        case 'tempSub':
+            minValue = 10;
+            maxValue = 45;
+            break;
+    }
+    
+    drawGauge(gauges[type], value, minValue, maxValue, type);
+}
 
 // ===== 標籤頁切換 =====
 function initializeTabs() {
@@ -51,6 +227,85 @@ function initializeTabs() {
             document.getElementById(tabName + '-panel').classList.add('active');
         });
     });
+}
+
+// ===== 初始化 Tooltip 點擊事件 =====
+function initializeTooltips() {
+    const helpIcons = document.querySelectorAll('.param-help');
+    
+    helpIcons.forEach(icon => {
+        // 點擊切換顯示/隱藏
+        icon.addEventListener('click', function(e) {
+            e.stopPropagation();
+            
+            // 關閉其他所有 tooltip
+            helpIcons.forEach(other => {
+                if (other !== this) {
+                    other.classList.remove('active');
+                }
+            });
+            
+            // 切換當前 tooltip
+            this.classList.toggle('active');
+        });
+        
+        // 懸停顯示
+        icon.addEventListener('mouseenter', function() {
+            // 關閉其他所有 tooltip
+            helpIcons.forEach(other => {
+                if (other !== this) {
+                    other.classList.remove('active');
+                }
+            });
+            
+            // 顯示當前 tooltip
+            this.classList.add('active');
+        });
+        
+        // 滑鼠離開隱藏（僅針對懸停觸發的）
+        icon.addEventListener('mouseleave', function() {
+            // 延遲隱藏，給用戶時間移動到 tooltip 上
+            setTimeout(() => {
+                if (!this.matches(':hover')) {
+                    this.classList.remove('active');
+                }
+            }, 100);
+        });
+    });
+    
+    // 點擊頁面其他地方關閉所有 tooltip
+    document.addEventListener('click', function(e) {
+        // 如果點擊的不是問號圖示，則關閉所有 tooltip
+        if (!e.target.classList.contains('param-help')) {
+            helpIcons.forEach(icon => {
+                icon.classList.remove('active');
+            });
+        }
+    });
+    
+    // ESC 鍵關閉 tooltip
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            helpIcons.forEach(icon => {
+                icon.classList.remove('active');
+            });
+        }
+    });
+}
+
+// ===== 設備控制切換 =====
+function toggleControl(device) {
+    const menu = document.getElementById(device + 'Menu');
+    
+    // 關閉其他菜單
+    document.querySelectorAll('.control-menu').forEach(m => {
+        if (m.id !== device + 'Menu') {
+            m.classList.remove('active');
+        }
+    });
+    
+    // 切換當前菜單
+    menu.classList.toggle('active');
 }
 
 // ===== MQTT 連接 =====
@@ -74,6 +329,7 @@ function connectToDevice() {
     topics.controlHeater = `farm/control/${deviceId}/heater`;
     topics.controlMist = `farm/control/${deviceId}/mist`;
     topics.controlFeed = `farm/control/${deviceId}/feed`;
+    topics.controlMode = `farm/control/${deviceId}/mode`;
     topics.configIn = `farm/config/${deviceId}`;
     topics.configOut = `farm/config/${deviceId}/current`;
     topics.status = `farm/status/${deviceId}`;
@@ -82,7 +338,6 @@ function connectToDevice() {
     addLog(`正在連接到 ${brokerInput}...`, 'info');
     
     // 使用 WebSocket 連接
-    // broker.MQTTGO.io: WSS port 8084, MQTT port 1883
     const wsUrl = `wss://${brokerInput}:8084/mqtt`;
     
     try {
@@ -109,33 +364,14 @@ function onMqttConnect() {
     updateConnectionStatus(true);
     addLog('成功連接到 MQTT Broker', 'success');
     
-    // 訂閱所有相關 topics (QoS 0)
-    mqttClient.subscribe(topics.telemetry, {qos: 0}, (err) => {
-        if (!err) {
-            console.log('✅ 已訂閱:', topics.telemetry);
-        } else {
-            console.error('❌ 訂閱失敗:', topics.telemetry, err);
-        }
-    });
-    mqttClient.subscribe(topics.configOut, {qos: 0}, (err) => {
-        if (!err) {
-            console.log('✅ 已訂閱:', topics.configOut);
-        } else {
-            console.error('❌ 訂閱失敗:', topics.configOut, err);
-        }
-    });
-    mqttClient.subscribe(topics.status, {qos: 0}, (err) => {
-        if (!err) {
-            console.log('✅ 已訂閱:', topics.status);
-        } else {
-            console.error('❌ 訂閱失敗:', topics.status, err);
-        }
-    });
+    // 訂閱所有相關 topics
+    mqttClient.subscribe(topics.telemetry, {qos: 0});
+    mqttClient.subscribe(topics.configOut, {qos: 0});
+    mqttClient.subscribe(topics.status, {qos: 0});
     
     addLog(`已訂閱裝置 ${deviceId} 的資料`, 'success');
-    addLog('等待 Arduino 裝置上線...', 'info');
     
-    // 延遲請求配置，給 Arduino 時間連接
+    // 延遲請求配置
     setTimeout(() => {
         loadCurrentConfig();
     }, 2000);
@@ -145,18 +381,12 @@ function onMqttMessage(topic, message) {
     try {
         const payload = JSON.parse(message.toString());
         
-        // 除錯：顯示收到的訊息
-        console.log('📨 收到 MQTT 訊息 [' + new Date().toLocaleTimeString() + ']:', topic, payload);
-        
         if (topic === topics.telemetry) {
             updateTelemetry(payload);
-            addLog('收到遙測資料', 'success');
         } else if (topic === topics.configOut) {
             updateConfigDisplay(payload);
         } else if (topic === topics.status) {
             handleStatusUpdate(payload);
-        } else {
-            console.warn('⚠️ 收到未處理的 Topic:', topic);
         }
         
         updateLastUpdateTime();
@@ -200,34 +430,52 @@ function updateConnectionStatus(connected) {
 // ===== 更新遙測數據 =====
 function updateTelemetry(data) {
     // 環境溫度
-    const tempEnvEl = document.getElementById('tempEnv');
     if (data.temp_env !== undefined && !isNaN(data.temp_env)) {
-        tempEnvEl.innerHTML = data.temp_env.toFixed(1) + '<span>°C</span>';
+        const tempEnvValue = data.temp_env;
+        document.getElementById('tempEnv').textContent = tempEnvValue.toFixed(1);
+        updateGauge('tempEnv', tempEnvValue);
     } else {
-        tempEnvEl.innerHTML = '--<span>°C</span>';
+        document.getElementById('tempEnv').textContent = '--';
+        updateGauge('tempEnv', 10); // 顯示最小值
     }
     
     // 環境濕度
-    const humEnvEl = document.getElementById('humEnv');
     if (data.hum_env !== undefined && !isNaN(data.hum_env)) {
-        humEnvEl.innerHTML = data.hum_env.toFixed(1) + '<span>%</span>';
+        const humEnvValue = data.hum_env;
+        document.getElementById('humEnv').textContent = humEnvValue.toFixed(1);
+        updateGauge('humEnv', humEnvValue);
     } else {
-        humEnvEl.innerHTML = '--<span>%</span>';
+        document.getElementById('humEnv').textContent = '--';
+        updateGauge('humEnv', 0); // 顯示最小值
     }
     
     // 基質溫度
-    const tempSubEl = document.getElementById('tempSub');
     if (data.temp_sub !== undefined && data.temp_sub !== null && !isNaN(data.temp_sub)) {
-        tempSubEl.innerHTML = data.temp_sub.toFixed(1) + '<span>°C</span>';
+        const tempSubValue = data.temp_sub;
+        document.getElementById('tempSub').textContent = tempSubValue.toFixed(1);
+        updateGauge('tempSub', tempSubValue);
     } else {
-        tempSubEl.innerHTML = '--<span>°C</span>';
+        document.getElementById('tempSub').textContent = '--';
+        updateGauge('tempSub', 10); // 顯示最小值
     }
     
     // 運作模式
     if (data.mode) {
-        const modeElement = document.getElementById('mode');
-        modeElement.textContent = data.mode === 'AUTO' ? '自動' : '手動';
-        modeElement.style.color = data.mode === 'AUTO' ? 'var(--color-success)' : 'var(--color-warning)';
+        // 更新運作模式控制顯示
+        const modeBadge = document.getElementById('modeBadge');
+        const modeLogo = document.getElementById('modeLogo');
+        
+        if (data.mode === 'AUTO') {
+            modeBadge.textContent = 'AUTO';
+            modeBadge.classList.add('auto');
+            modeBadge.classList.remove('manual');
+            modeLogo.classList.add('active');
+        } else {
+            modeBadge.textContent = 'MANUAL';
+            modeBadge.classList.add('manual');
+            modeBadge.classList.remove('auto');
+            modeLogo.classList.remove('active');
+        }
     }
     
     // 加熱器狀態
@@ -243,16 +491,18 @@ function updateTelemetry(data) {
 
 // ===== 更新設備狀態 =====
 function updateDeviceStatus(device, isOn) {
-    const statusElement = document.getElementById(`${device}Status`);
+    const badge = document.getElementById(`${device}Badge`);
+    const logo = document.getElementById(`${device}Logo`);
     
     if (isOn) {
-        statusElement.textContent = '運作中';
-        statusElement.classList.add('active');
-        statusElement.classList.remove('inactive');
+        badge.textContent = 'ON';
+        badge.classList.add('on');
+        badge.classList.remove('auto');
+        logo.classList.add('active');
     } else {
-        statusElement.textContent = '關閉';
-        statusElement.classList.remove('active');
-        statusElement.classList.add('inactive');
+        badge.textContent = 'OFF';
+        badge.classList.remove('on', 'auto');
+        logo.classList.remove('active');
     }
 }
 
@@ -260,9 +510,10 @@ function updateDeviceStatus(device, isOn) {
 function handleStatusUpdate(data) {
     if (data.event === 'feed') {
         addLog('餵食器已執行餵食動作', 'success');
-        document.getElementById('feedStatus').textContent = '已餵食';
+        const feedBadge = document.getElementById('feedBadge');
+        feedBadge.textContent = '已餵食';
         setTimeout(() => {
-            document.getElementById('feedStatus').textContent = '待命';
+            feedBadge.textContent = '待命';
         }, 3000);
     }
     
@@ -284,6 +535,29 @@ function controlHeater(action) {
     
     mqttClient.publish(topics.controlHeater, action);
     addLog(`已發送加熱器控制指令: ${action}`, 'info');
+    
+    // 更新狀態顯示
+    const badge = document.getElementById('heaterBadge');
+    const logo = document.getElementById('heaterLogo');
+    
+    if (action === 'ON') {
+        badge.textContent = 'ON';
+        badge.classList.add('on');
+        badge.classList.remove('auto');
+        logo.classList.add('active');
+    } else if (action === 'OFF') {
+        badge.textContent = 'OFF';
+        badge.classList.remove('on', 'auto');
+        logo.classList.remove('active');
+    } else if (action === 'AUTO') {
+        badge.textContent = 'AUTO';
+        badge.classList.add('auto');
+        badge.classList.remove('on');
+        logo.classList.remove('active');
+    }
+    
+    // 關閉菜單
+    document.getElementById('heaterMenu').classList.remove('active');
 }
 
 function controlMist(action) {
@@ -294,6 +568,29 @@ function controlMist(action) {
     
     mqttClient.publish(topics.controlMist, action);
     addLog(`已發送噴霧器控制指令: ${action}`, 'info');
+    
+    // 更新狀態顯示
+    const badge = document.getElementById('mistBadge');
+    const logo = document.getElementById('mistLogo');
+    
+    if (action === 'ON') {
+        badge.textContent = 'ON';
+        badge.classList.add('on');
+        badge.classList.remove('auto');
+        logo.classList.add('active');
+    } else if (action === 'OFF') {
+        badge.textContent = 'OFF';
+        badge.classList.remove('on', 'auto');
+        logo.classList.remove('active');
+    } else if (action === 'AUTO') {
+        badge.textContent = 'AUTO';
+        badge.classList.add('auto');
+        badge.classList.remove('on');
+        logo.classList.remove('active');
+    }
+    
+    // 關閉菜單
+    document.getElementById('mistMenu').classList.remove('active');
 }
 
 function triggerFeed() {
@@ -304,6 +601,42 @@ function triggerFeed() {
     
     mqttClient.publish(topics.controlFeed, 'TRIGGER');
     addLog('已觸發餵食動作', 'info');
+    
+    // 更新狀態顯示
+    const badge = document.getElementById('feedBadge');
+    badge.textContent = '餵食中';
+    setTimeout(() => {
+        badge.textContent = '待命';
+    }, 3000);
+}
+
+function controlMode(action) {
+    if (!isConnected) {
+        addLog('請先連接裝置', 'error');
+        return;
+    }
+    
+    mqttClient.publish(topics.controlMode, action);
+    addLog(`已切換運作模式: ${action}`, 'info');
+    
+    // 更新狀態顯示
+    const badge = document.getElementById('modeBadge');
+    const logo = document.getElementById('modeLogo');
+    
+    if (action === 'AUTO') {
+        badge.textContent = 'AUTO';
+        badge.classList.add('auto');
+        badge.classList.remove('manual');
+        logo.classList.add('active');
+    } else if (action === 'MANUAL') {
+        badge.textContent = 'MANUAL';
+        badge.classList.add('manual');
+        badge.classList.remove('auto');
+        logo.classList.remove('active');
+    }
+    
+    // 關閉菜單
+    document.getElementById('modeMenu').classList.remove('active');
 }
 
 // ===== 讀取目前設定 =====
@@ -335,6 +668,12 @@ function updateConfigDisplay(config) {
     if (config.ntc_heat_on_minutes !== undefined) {
         document.getElementById('ntcHeatMinutes').value = config.ntc_heat_on_minutes;
     }
+    if (config.ntc_adc_vref !== undefined) {
+        document.getElementById('ntcAdcVref').value = config.ntc_adc_vref;
+    }
+    if (config.ntc_temp_offset !== undefined) {
+        document.getElementById('ntcTempOffset').value = config.ntc_temp_offset;
+    }
     
     // 濕度控制
     if (config.H_mist_on !== undefined) {
@@ -351,12 +690,11 @@ function updateConfigDisplay(config) {
     }
     
     // 餵食設定
-    if (config.feed_interval_seconds !== undefined) {
-        // 從秒轉換為分鐘顯示
-        document.getElementById('feedInterval').value = Math.round(config.feed_interval_seconds / 60);
-    }
     if (config.feed_duration_ms !== undefined) {
-        document.getElementById('feedDuration').value = config.feed_duration_ms;
+        document.getElementById('feedDuration').value = (config.feed_duration_ms / 1000).toFixed(1); // 毫秒轉秒
+    }
+    if (config.feed_min_interval_hours !== undefined) {
+        document.getElementById('feedMinIntervalHours').value = config.feed_min_interval_hours;
     }
     if (config.feed_times_csv !== undefined) {
         document.getElementById('feedTimes').value = config.feed_times_csv;
@@ -364,11 +702,7 @@ function updateConfigDisplay(config) {
     
     // 系統設定
     if (config.upload_interval_seconds !== undefined) {
-        // 從秒轉換為分鐘顯示
         document.getElementById('uploadInterval').value = Math.round(config.upload_interval_seconds / 60);
-    }
-    if (config.mode !== undefined) {
-        document.getElementById('modeSelect').value = config.mode;
     }
     
     addLog('已載入裝置設定', 'success');
@@ -389,12 +723,16 @@ function saveConfig() {
     const heaterMaxTemp = parseFloat(document.getElementById('heaterMaxTemp').value);
     const ntcLowTemp = parseFloat(document.getElementById('ntcLowTemp').value);
     const ntcHeatMinutes = parseInt(document.getElementById('ntcHeatMinutes').value);
+    const ntcAdcVref = parseFloat(document.getElementById('ntcAdcVref').value);
+    const ntcTempOffset = parseFloat(document.getElementById('ntcTempOffset').value);
     
     if (!isNaN(tHeatOn)) config.T_heat_on = tHeatOn;
     if (!isNaN(tHeatOff)) config.T_heat_off = tHeatOff;
     if (!isNaN(heaterMaxTemp)) config.heater_max_temp = heaterMaxTemp;
     if (!isNaN(ntcLowTemp)) config.ntc_low_temp_threshold = ntcLowTemp;
     if (!isNaN(ntcHeatMinutes)) config.ntc_heat_on_minutes = ntcHeatMinutes;
+    if (!isNaN(ntcAdcVref)) config.ntc_adc_vref = ntcAdcVref;
+    if (!isNaN(ntcTempOffset)) config.ntc_temp_offset = ntcTempOffset;
     
     // 濕度控制
     const hMistOn = parseFloat(document.getElementById('hMistOn').value);
@@ -408,22 +746,20 @@ function saveConfig() {
     if (!isNaN(mistMinOff)) config.mist_min_off_seconds = mistMinOff;
     
     // 餵食設定
-    const feedIntervalMinutes = parseInt(document.getElementById('feedInterval').value);
-    const feedDuration = parseInt(document.getElementById('feedDuration').value);
+    const feedDurationSeconds = parseFloat(document.getElementById('feedDuration').value);
+    const feedMinIntervalHours = parseInt(document.getElementById('feedMinIntervalHours').value);
     const feedTimes = document.getElementById('feedTimes').value;
     
-    // 從分鐘轉換為秒儲存
-    if (!isNaN(feedIntervalMinutes)) config.feed_interval_seconds = feedIntervalMinutes * 60;
-    if (!isNaN(feedDuration)) config.feed_duration_ms = feedDuration;
+    if (!isNaN(feedDurationSeconds)) config.feed_duration_ms = Math.round(feedDurationSeconds * 1000); // 秒轉毫秒
+    if (!isNaN(feedMinIntervalHours) && feedMinIntervalHours >= 1 && feedMinIntervalHours <= 24) {
+        config.feed_min_interval_hours = feedMinIntervalHours;
+    }
     if (feedTimes) config.feed_times_csv = feedTimes;
     
     // 系統設定
     const uploadIntervalMinutes = parseInt(document.getElementById('uploadInterval').value);
-    const mode = document.getElementById('modeSelect').value;
     
-    // 從分鐘轉換為秒儲存
     if (!isNaN(uploadIntervalMinutes)) config.upload_interval_seconds = uploadIntervalMinutes * 60;
-    if (mode) config.mode = mode;
     
     // 發送設定
     const payload = JSON.stringify(config);
@@ -491,7 +827,10 @@ function updateLastUpdateTime() {
         second: '2-digit',
         hour12: false
     });
-    document.getElementById('lastUpdate').textContent = timeString;
+    const lastUpdateElement = document.getElementById('lastUpdate');
+    if (lastUpdateElement) {
+        lastUpdateElement.textContent = timeString;
+    }
 }
 
 // ===== 定期檢查連接狀態 =====
@@ -501,37 +840,22 @@ setInterval(() => {
     }
 }, 5000);
 
-// ===== 除錯工具函數 =====
-window.mqttDebug = {
-    resubscribe: function() {
-        if (!mqttClient || !mqttClient.connected) {
-            console.error('MQTT 未連接');
-            return;
+// ===== 視窗大小改變時重繪儀表盤 =====
+window.addEventListener('resize', () => {
+    // 重繪所有儀表盤
+    setTimeout(() => {
+        const tempEnvValue = parseFloat(document.getElementById('tempEnv').textContent);
+        const humEnvValue = parseFloat(document.getElementById('humEnv').textContent);
+        const tempSubValue = parseFloat(document.getElementById('tempSub').textContent);
+        
+        if (!isNaN(tempEnvValue)) {
+            updateGauge('tempEnv', tempEnvValue, 50);
         }
-        console.log('🔄 重新訂閱所有 Topics...');
-        mqttClient.subscribe(topics.telemetry, {qos: 0}, (err) => {
-            console.log(err ? '❌ 失敗:' : '✅ 成功:', topics.telemetry);
-        });
-        mqttClient.subscribe(topics.configOut, {qos: 0}, (err) => {
-            console.log(err ? '❌ 失敗:' : '✅ 成功:', topics.configOut);
-        });
-        mqttClient.subscribe(topics.status, {qos: 0}, (err) => {
-            console.log(err ? '❌ 失敗:' : '✅ 成功:', topics.status);
-        });
-    },
-    checkTopics: function() {
-        console.log('📋 當前 Topics:', topics);
-        console.log('🔌 MQTT 連接狀態:', mqttClient ? mqttClient.connected : 'null');
-        console.log('📱 裝置 ID:', deviceId);
-    },
-    testPublish: function() {
-        if (!mqttClient || !mqttClient.connected) {
-            console.error('MQTT 未連接');
-            return;
+        if (!isNaN(humEnvValue)) {
+            updateGauge('humEnv', humEnvValue, 100);
         }
-        const testTopic = 'farm/test/' + deviceId;
-        mqttClient.publish(testTopic, 'test message from web');
-        console.log('📤 已發送測試訊息到:', testTopic);
-    }
-};
-
+        if (!isNaN(tempSubValue)) {
+            updateGauge('tempSub', tempSubValue, 50);
+        }
+    }, 100);
+});
