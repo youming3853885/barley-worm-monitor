@@ -229,6 +229,48 @@ function initializeTabs() {
     });
 }
 
+// ===== 計算 Tooltip 位置 =====
+function calculateTooltipPosition(icon) {
+    const tooltipText = icon.getAttribute('data-tooltip');
+    if (!tooltipText) return;
+    
+    const isRightAligned = icon.classList.contains('param-help-right');
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 20; // 邊界安全距離
+    
+    // 創建臨時元素來測量 tooltip 實際尺寸
+    const tempDiv = document.createElement('div');
+    tempDiv.style.cssText = 'position: absolute; visibility: hidden; white-space: normal; max-width: 320px; min-width: 200px; padding: 12px 16px; font-size: 13px; line-height: 1.5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif; word-wrap: break-word; box-sizing: border-box;';
+    tempDiv.textContent = tooltipText;
+    document.body.appendChild(tempDiv);
+    
+    const tooltipWidth = tempDiv.offsetWidth;
+    const tooltipHeight = tempDiv.offsetHeight;
+    document.body.removeChild(tempDiv);
+    
+    if (isRightAligned) {
+        // 對於 param-help-right，計算是否會超出右邊界
+        const iconRect = icon.getBoundingClientRect();
+        const spaceRight = viewportWidth - iconRect.right - margin - 12; // 12px 是 margin-left
+        
+        // 如果右側空間不足，改用固定右側顯示（與一般 tooltip 一樣）
+        if (spaceRight < tooltipWidth) {
+            icon.classList.add('tooltip-fallback-right');
+        } else {
+            icon.classList.remove('tooltip-fallback-right');
+        }
+    } else {
+        // 對於一般 tooltip，確保不會超出左邊界
+        const maxTooltipWidth = viewportWidth - margin * 2;
+        if (tooltipWidth > maxTooltipWidth) {
+            icon.style.setProperty('--tooltip-max-width', maxTooltipWidth + 'px');
+        } else {
+            icon.style.setProperty('--tooltip-max-width', '320px');
+        }
+    }
+}
+
 // ===== 初始化 Tooltip 點擊事件 =====
 function initializeTooltips() {
     const helpIcons = document.querySelectorAll('.param-help');
@@ -245,7 +287,8 @@ function initializeTooltips() {
                 }
             });
             
-            // 切換當前 tooltip
+            // 計算位置後顯示
+            calculateTooltipPosition(this);
             this.classList.toggle('active');
         });
         
@@ -258,7 +301,8 @@ function initializeTooltips() {
                 }
             });
             
-            // 顯示當前 tooltip
+            // 計算位置後顯示
+            calculateTooltipPosition(this);
             this.classList.add('active');
         });
         
@@ -271,6 +315,19 @@ function initializeTooltips() {
                 }
             }, 100);
         });
+    });
+    
+    // 視窗大小改變時重新計算位置
+    let resizeTimer;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function() {
+            helpIcons.forEach(icon => {
+                if (icon.classList.contains('active')) {
+                    calculateTooltipPosition(icon);
+                }
+            });
+        }, 100);
     });
     
     // 點擊頁面其他地方關閉所有 tooltip
@@ -856,6 +913,6 @@ window.addEventListener('resize', () => {
         }
         if (!isNaN(tempSubValue)) {
             updateGauge('tempSub', tempSubValue, 50);
-        }
+    }
     }, 100);
 });

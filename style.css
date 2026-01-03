@@ -1305,14 +1305,15 @@ body {
 .param-help.active {
     background: var(--color-primary);
     transform: scale(1.1);
-    z-index: 9999999;
+    z-index: 2147483647;
     position: relative;
 }
 
 .param-help::after {
     content: attr(data-tooltip);
-    position: fixed;
+    position: fixed !important;
     top: 50%;
+    left: 20px;
     right: 20px;
     transform: translateY(-50%);
     background: rgba(0, 0, 0, 0.95);
@@ -1323,28 +1324,36 @@ body {
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s ease;
-    z-index: 99999999;
+    z-index: 2147483647 !important;
     pointer-events: none;
-    width: 280px;
+    max-width: calc(100vw - 40px);
+    min-width: 200px;
+    width: 240px;
     white-space: normal;
     text-align: left;
     line-height: 1.5;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.2);
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    box-sizing: border-box;
+    margin-left: 0;
+    margin-right: 0;
 }
 
 .param-help::before {
     content: '';
-    position: fixed;
+    position: fixed !important;
     top: 50%;
-    right: 300px;
+    right: auto;
     transform: translateY(-50%);
     border: 8px solid transparent;
     border-right-color: rgba(0, 0, 0, 0.95);
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s ease;
-    z-index: 99999999;
+    z-index: 2147483647 !important;
 }
 
 .param-help:hover::after,
@@ -1356,19 +1365,46 @@ body {
 }
 
 /* 特定參數的右側顯示樣式 */
+.param-help-right {
+    position: relative;
+    z-index: 2147483647;
+}
+
 .param-help-right::after {
-    position: absolute;
+    position: absolute !important;
     top: 50%;
     left: 100%;
     right: auto;
     transform: translateY(-50%);
     margin-left: 12px;
-    width: 280px;
-    z-index: 99999999;
+    max-width: min(320px, calc(100vw - 40px));
+    min-width: 200px;
+    width: 240px;
+    white-space: normal;
+    text-align: left;
+    line-height: 1.5;
+    z-index: 2147483647 !important;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    box-sizing: border-box;
+}
+
+/* 當右側空間不足時，改用固定左側顯示 */
+.param-help-right.tooltip-fallback-right::after {
+    position: fixed !important;
+    left: 20px !important;
+    right: 20px !important;
+    margin-left: 0 !important;
+    max-width: calc(100vw - 40px) !important;
+}
+
+.param-help-right.tooltip-fallback-right::before {
+    display: none !important;
 }
 
 .param-help-right::before {
-    position: absolute;
+    position: absolute !important;
     top: 50%;
     left: 100%;
     right: auto;
@@ -1376,7 +1412,7 @@ body {
     margin-left: 6px;
     border-right-color: rgba(0, 0, 0, 0.95);
     border-left-color: transparent;
-    z-index: 99999999;
+    z-index: 2147483647 !important;
 }
 
 /* 確保說明框在所有容器上方顯示 */
