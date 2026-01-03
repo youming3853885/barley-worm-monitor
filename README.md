@@ -44,12 +44,6 @@
 
 ## 技術架構
 
-### 前端技術
-- **HTML5** - 語義化標記
-- **CSS3** - iOS 風格設計,響應式佈局
-- **JavaScript (ES6+)** - 互動邏輯
-- **MQTT.js** - MQTT 通訊協定支援
-
 ### 通訊協定
 - **MQTT over WebSocket** - 即時雙向通訊
 - 支援標準 MQTT broker (如 HiveMQ, Mosquitto 等)
@@ -95,14 +89,6 @@ farm/command/<DEVICE_ID>          # 系統指令
 Broker: broker.hivemq.com
 WebSocket Port: 8000
 ```
-
-## 資料持久化
-
-系統會自動將以下資料儲存在瀏覽器本地:
-- 裝置 ID
-- MQTT Broker 地址
-- 最後設定的參數
-
 
 ## 授權
 
