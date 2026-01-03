@@ -100,9 +100,9 @@
                                 </svg>
                                 <span>基質溫度</span>
                             </div>
+                            </div>
                         </div>
-                    </div>
-                    
+
                 </section>
 
                 <!-- 設備控制 -->
@@ -114,9 +114,9 @@
                             <div class="control-logo heater" onclick="toggleControl('heater')" id="heaterLogo">
                                 <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M 50 10 L 25 50 L 50 42 L 32 68 L 50 56 L 38 88 L 80 32 L 62 44 L 80 16 L 62 28 Z" fill="#FF9500"/>
-                                </svg>
+                                    </svg>
                                 <div class="status-badge" id="heaterBadge">OFF</div>
-                            </div>
+                                </div>
                             <div class="control-label">加熱器</div>
                             <div class="control-menu" id="heaterMenu">
                                 <button class="control-btn on" onclick="controlHeater('ON')">開啟</button>
@@ -134,9 +134,9 @@
                                     <circle cx="80" cy="50" r="12" fill="#007AFF" opacity="0.8"/>
                                     <circle cx="30" cy="75" r="9" fill="#007AFF" opacity="0.6"/>
                                     <circle cx="70" cy="75" r="9" fill="#007AFF" opacity="0.6"/>
-                                </svg>
+                                    </svg>
                                 <div class="status-badge" id="mistBadge">OFF</div>
-                            </div>
+                                </div>
                             <div class="control-label">噴霧器</div>
                             <div class="control-menu" id="mistMenu">
                                 <button class="control-btn on" onclick="controlMist('ON')">開啟</button>
@@ -153,12 +153,12 @@
                                     <circle cx="38" cy="38" r="6" fill="#34C759"/>
                                     <circle cx="62" cy="50" r="6" fill="#34C759"/>
                                     <circle cx="50" cy="65" r="5" fill="#34C759"/>
-                                </svg>
+                                    </svg>
                                 <div class="status-badge" id="feedBadge">待命</div>
-                            </div>
+                                </div>
                             <div class="control-label">餵食器</div>
                             <div class="control-hint">點擊立即餵食</div>
-                        </div>
+                                </div>
 
                         <!-- 運作模式 -->
                         <div class="control-item">
@@ -320,7 +320,7 @@
                             <div class="form-group-compact">
                                 <label>
                                     運轉時間
-                                    <span class="param-help" data-tooltip="餵食器每次運轉的持續時間（秒），控制餵食量">?</span>
+                                    <span class="param-help param-help-right" data-tooltip="餵食器每次運轉的持續時間（秒），控制餵食量">?</span>
                                 </label>
                                 <div class="input-with-unit-compact">
                                     <input type="number" id="feedDuration" step="0.1" placeholder="10">
