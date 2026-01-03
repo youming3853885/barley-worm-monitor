@@ -1313,7 +1313,7 @@ body {
     content: attr(data-tooltip);
     position: fixed !important;
     top: 50%;
-    left: 20px;
+    left: auto;
     right: 20px;
     transform: translateY(-50%);
     background: rgba(0, 0, 0, 0.95);
@@ -1326,7 +1326,7 @@ body {
     transition: all 0.3s ease;
     z-index: 2147483647 !important;
     pointer-events: none;
-    max-width: calc(100vw - 40px);
+    max-width: min(240px, calc(100vw - 40px));
     min-width: 200px;
     width: 240px;
     white-space: normal;
@@ -1377,7 +1377,7 @@ body {
     right: auto;
     transform: translateY(-50%);
     margin-left: 12px;
-    max-width: min(320px, calc(100vw - 40px));
+    max-width: min(240px, calc(100vw - 40px));
     min-width: 200px;
     width: 240px;
     white-space: normal;
@@ -1390,13 +1390,13 @@ body {
     box-sizing: border-box;
 }
 
-/* 當右側空間不足時，改用固定左側顯示 */
+/* 當右側空間不足時，改用固定右側顯示，確保至少距離左右邊界 20px */
 .param-help-right.tooltip-fallback-right::after {
     position: fixed !important;
-    left: 20px !important;
+    left: auto !important;
     right: 20px !important;
     margin-left: 0 !important;
-    max-width: calc(100vw - 40px) !important;
+    max-width: min(240px, calc(100vw - 40px)) !important;
 }
 
 .param-help-right.tooltip-fallback-right::before {

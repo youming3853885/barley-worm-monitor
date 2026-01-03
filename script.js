@@ -253,21 +253,17 @@ function calculateTooltipPosition(icon) {
         // 對於 param-help-right，計算是否會超出右邊界
         const iconRect = icon.getBoundingClientRect();
         const spaceRight = viewportWidth - iconRect.right - margin - 12; // 12px 是 margin-left
+        const spaceLeft = iconRect.left - margin;
         
-        // 如果右側空間不足，改用固定右側顯示（與一般 tooltip 一樣）
-        if (spaceRight < tooltipWidth) {
+        // 如果右側空間不足（會導致超出右邊界），或者左側空間不足（會導致超出左邊界），改用固定右側顯示
+        if (spaceRight < tooltipWidth || (iconRect.right + 12 + tooltipWidth) > (viewportWidth - margin)) {
             icon.classList.add('tooltip-fallback-right');
         } else {
             icon.classList.remove('tooltip-fallback-right');
         }
     } else {
-        // 對於一般 tooltip，確保不會超出左邊界
-        const maxTooltipWidth = viewportWidth - margin * 2;
-        if (tooltipWidth > maxTooltipWidth) {
-            icon.style.setProperty('--tooltip-max-width', maxTooltipWidth + 'px');
-        } else {
-            icon.style.setProperty('--tooltip-max-width', '320px');
-        }
+        // 對於一般 tooltip，max-width 已經確保至少距離左右邊界 20px
+        // 不需要額外處理
     }
 }
 
